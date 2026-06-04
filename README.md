@@ -16,7 +16,7 @@ streamlit run app.py
 ## Despliegue en Streamlit Cloud
 
 1. Sube este repositorio a GitHub sin los archivos sensibles.
-2. En Streamlit Cloud configura los secrets usando el formato de `.streamlit/secrets.toml.example`.
+2. En Streamlit Cloud configura manualmente los secrets de Google Sheets y, si aplica, los de Supabase.
 3. En la app desplegada:
    - `recuperacion` usa Google Sheets y necesita además subir el Excel de recuperación en la barra lateral.
    - `avimex` y `federal` usan el Excel `Inventario_material_y_reactivos_21_Enero_2026.xlsx`, también vía upload en la barra lateral.
