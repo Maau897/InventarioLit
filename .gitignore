@@ -1,0 +1,13 @@
+.streamlit/secrets.toml
+secrets.toml
+*.json
+*.xlsx
+*.xlsm
+*.xls
+*.docx
+data/movimientos_app.csv
+data/*.csv
+__pycache__/
+.tmp_pycache/
+*.pyc
+.DS_Store
