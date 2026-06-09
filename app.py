@@ -23,7 +23,7 @@ from inventory_app.excel_loader import (
     load_workbook_frames,
 )
 from inventory_app.google_sheets_loader import (
-    get_google_sheet_settings_from_secrets,
+    get_google_sheet_settings,
     load_google_sheet_frames,
     load_sheet_dataframe,
 )
@@ -406,32 +406,44 @@ def load_inventory_bundle(
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
     if inventory_scope == "recuperacion":
         google_frames = load_google_sheet_frames(sheet_settings)
-        excel_frames = load_workbook_frames(recovery_workbook_source)
-        frames = {
-            "entradas": pd.concat(
-                [
-                    harmonize_transaction_keys(google_frames["entradas"]),
-                    harmonize_transaction_keys(excel_frames["entradas"]),
-                ],
-                ignore_index=True,
-            ),
-            "salidas": pd.concat(
-                [
-                    harmonize_transaction_keys(google_frames["salidas"]),
-                    harmonize_transaction_keys(excel_frames["salidas"]),
-                ],
-                ignore_index=True,
-            ),
-            "catalogo": combine_catalogs(
-                google_frames.get("catalogo", pd.DataFrame()),
-                excel_frames.get("catalogo", pd.DataFrame()),
-            ),
-        }
+        if recovery_workbook_source is not None:
+            excel_frames = load_workbook_frames(recovery_workbook_source)
+            frames = {
+                "entradas": pd.concat(
+                    [
+                        harmonize_transaction_keys(google_frames["entradas"]),
+                        harmonize_transaction_keys(excel_frames["entradas"]),
+                    ],
+                    ignore_index=True,
+                ),
+                "salidas": pd.concat(
+                    [
+                        harmonize_transaction_keys(google_frames["salidas"]),
+                        harmonize_transaction_keys(excel_frames["salidas"]),
+                    ],
+                    ignore_index=True,
+                ),
+                "catalogo": combine_catalogs(
+                    google_frames.get("catalogo", pd.DataFrame()),
+                    excel_frames.get("catalogo", pd.DataFrame()),
+                ),
+            }
+        else:
+            frames = google_frames
         registry_df = clean_registry_sheet(load_sheet_dataframe(sheet_settings["spreadsheet_id"], "Registro"))
         results_df = clean_count_results_sheet(
             load_sheet_dataframe(sheet_settings["spreadsheet_id"], "Resultados de conteos")
         )
         return frames, registry_df, results_df
+
+    if sheet_settings.get("spreadsheet_id", "").strip():
+        frames = load_google_sheet_frames(sheet_settings)
+        return frames, pd.DataFrame(), pd.DataFrame()
+
+    if materials_workbook_source is None:
+        raise RuntimeError(
+            f"No hay Google Sheets configurado para `{INVENTORY_SCOPES[inventory_scope]}` y tampoco existe el Excel local."
+        )
 
     frames = load_material_inventory_frames(materials_workbook_source, inventory_scope)
     return frames, pd.DataFrame(), pd.DataFrame()
@@ -440,20 +452,16 @@ def load_inventory_bundle(
 def explain_load_error(exc: Exception, inventory_scope: str) -> None:
     st.error(f"No pude cargar el inventario `{INVENTORY_SCOPES[inventory_scope]}`: {exc}")
     if inventory_scope == "recuperacion":
-        st.info("Verifica credenciales de Google Sheets, permiso compartido y la ruta del Excel local de recuperación.")
+        st.info("Verifica credenciales de Google Sheets, permiso compartido y, si quieres histórico adicional, que el Excel local exista.")
     else:
-        st.info("Verifica la ruta del archivo `Inventario_material_y_reactivos_21_Enero_2026.xlsx`.")
+        st.info("Configura un Google Sheet para ese inventario o deja disponible el Excel local en esta máquina.")
 
 
-def resolve_workbook_source(local_path: str, uploaded_file, label: str):
-    if uploaded_file is not None:
-        return uploaded_file
+def resolve_workbook_source(local_path: str):
     path = Path(local_path)
     if path.exists():
         return path
-    raise FileNotFoundError(
-        f"No encontre {label}. Sube el archivo en la barra lateral o coloca una ruta valida."
-    )
+    return None
 
 
 def main() -> None:
@@ -462,7 +470,6 @@ def main() -> None:
     st.caption("Inventarios operativos por scope: recuperacion, avimex y federal/general.")
 
     repository = get_repository()
-    secrets_settings = get_google_sheet_settings_from_secrets()
 
     inventory_scope = st.sidebar.radio(
         "Inventario activo",
@@ -475,70 +482,45 @@ def main() -> None:
         "Excel de recuperacion",
         value=str(RECOVERY_WORKBOOK_PATH),
     )
-    recovery_workbook_upload = st.sidebar.file_uploader(
-        "Subir Excel de recuperacion",
-        type=["xlsm", "xlsx"],
-        accept_multiple_files=False,
-        help="Usa esto en Streamlit Cloud para no subir el archivo al repositorio.",
-    )
     materials_workbook_path = st.sidebar.text_input(
         "Excel Avimex/Federal",
         value=str(MATERIALS_WORKBOOK_PATH),
     )
-    materials_workbook_upload = st.sidebar.file_uploader(
-        "Subir Excel Avimex/Federal",
-        type=["xlsx", "xlsm"],
-        accept_multiple_files=False,
-        help="Usa esto en Streamlit Cloud para no subir el archivo al repositorio.",
-    )
 
-    st.sidebar.markdown("**Google Sheets de recuperacion**")
-    spreadsheet_id = st.sidebar.text_input(
+    sheet_settings = get_google_sheet_settings(inventory_scope)
+
+    st.sidebar.markdown("**Fuente configurada**")
+    if inventory_scope == "recuperacion":
+        st.sidebar.caption("Google Sheets obligatorio. Excel local opcional para histórico adicional.")
+    else:
+        st.sidebar.caption("Google Sheets recomendado. Excel local solo como fallback de desarrollo.")
+    st.sidebar.text_input(
         "Spreadsheet ID",
-        value=secrets_settings.get("spreadsheet_id", ""),
-        disabled=inventory_scope != "recuperacion",
+        value=sheet_settings.get("spreadsheet_id", ""),
+        disabled=True,
     )
-    catalog_sheet = st.sidebar.text_input(
+    st.sidebar.text_input(
         "Pestana catalogo",
-        value=secrets_settings.get("catalog_sheet", SHEET_NAME_DEFAULTS["catalog_sheet"]),
-        disabled=inventory_scope != "recuperacion",
+        value=sheet_settings.get("catalog_sheet", SHEET_NAME_DEFAULTS["catalog_sheet"]),
+        disabled=True,
     )
-    entries_sheet = st.sidebar.text_input(
+    st.sidebar.text_input(
         "Pestana entradas",
-        value=secrets_settings.get("entries_sheet", SHEET_NAME_DEFAULTS["entries_sheet"]),
-        disabled=inventory_scope != "recuperacion",
+        value=sheet_settings.get("entries_sheet", SHEET_NAME_DEFAULTS["entries_sheet"]),
+        disabled=True,
     )
-    exits_sheet = st.sidebar.text_input(
+    st.sidebar.text_input(
         "Pestana salidas",
-        value=secrets_settings.get("exits_sheet", SHEET_NAME_DEFAULTS["exits_sheet"]),
-        disabled=inventory_scope != "recuperacion",
+        value=sheet_settings.get("exits_sheet", SHEET_NAME_DEFAULTS["exits_sheet"]),
+        disabled=True,
     )
-
-    sheet_settings = {
-        "spreadsheet_id": spreadsheet_id.strip(),
-        "catalog_sheet": catalog_sheet.strip(),
-        "entries_sheet": entries_sheet.strip(),
-        "exits_sheet": exits_sheet.strip(),
-    }
 
     recovery_workbook_source = None
     materials_workbook_source = None
-    try:
-        if inventory_scope == "recuperacion":
-            recovery_workbook_source = resolve_workbook_source(
-                recovery_workbook_path,
-                recovery_workbook_upload,
-                "el Excel de recuperacion",
-            )
-        else:
-            materials_workbook_source = resolve_workbook_source(
-                materials_workbook_path,
-                materials_workbook_upload,
-                "el Excel Avimex/Federal",
-            )
-    except Exception as exc:
-        st.error(str(exc))
-        return
+    if inventory_scope == "recuperacion":
+        recovery_workbook_source = resolve_workbook_source(recovery_workbook_path)
+    else:
+        materials_workbook_source = resolve_workbook_source(materials_workbook_path)
 
     try:
         frames, registry_df, results_df = load_inventory_bundle(
@@ -567,11 +549,21 @@ def main() -> None:
 
     st.markdown(f"### Inventario: {INVENTORY_SCOPES[inventory_scope]}")
     if inventory_scope == "recuperacion":
-        st.caption("Fuente: Google Sheets + Excel local de recuperacion.")
+        if recovery_workbook_source is None:
+            st.caption("Fuente: Google Sheets de recuperacion.")
+            st.info("No se encontro el Excel local de recuperacion. La app sigue operando solo con Google Sheets.")
+        else:
+            st.caption("Fuente: Google Sheets + Excel local de recuperacion.")
     elif inventory_scope == "avimex":
-        st.caption("Fuente: hoja `Avimex` enriquecida con `Inventario Final` cuando faltan claves.")
+        if sheet_settings.get("spreadsheet_id", "").strip():
+            st.caption("Fuente: Google Sheets de Avimex.")
+        else:
+            st.caption("Fuente: hoja `Avimex` enriquecida con `Inventario Final` cuando faltan claves.")
     else:
-        st.caption("Fuente: `Presupuesto federal`, `Reactivos` e `Inventario Final` para arrancar el inventario general/federal.")
+        if sheet_settings.get("spreadsheet_id", "").strip():
+            st.caption("Fuente: Google Sheets de Federal/general.")
+        else:
+            st.caption("Fuente: `Presupuesto federal`, `Reactivos` e `Inventario Final` para arrancar el inventario general/federal.")
 
     total_items = len(general_inventory_df)
     total_stock = float(general_inventory_df["existencia"].fillna(0).sum()) if not general_inventory_df.empty else 0

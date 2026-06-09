@@ -1,7 +1,8 @@
+import gspread
+import os
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
-import gspread
 
 from inventory_app.config import SHEET_NAME_DEFAULTS
 from inventory_app.excel_loader import BASE_COLUMNS, clean_base_sheet, clean_catalog_sheet
@@ -41,6 +42,50 @@ def get_google_sheet_settings_from_secrets() -> dict[str, str]:
         if key in secret_values:
             settings[key] = str(secret_values[key])
     return settings
+
+
+def get_config_value(secret_section: str, key: str, env_key: str, default: str = "") -> str:
+    try:
+        if secret_section in st.secrets and key in st.secrets[secret_section]:
+            return str(st.secrets[secret_section][key])
+    except Exception:
+        pass
+    return str(os.getenv(env_key, default))
+
+
+def get_google_sheet_settings(scope: str = "recuperacion") -> dict[str, str]:
+    section_map = {
+        "recuperacion": "google_sheets",
+        "avimex": "google_sheets_avimex",
+        "federal": "google_sheets_federal",
+    }
+    env_prefix_map = {
+        "recuperacion": "RECOVERY",
+        "avimex": "AVIMEX",
+        "federal": "FEDERAL",
+    }
+    section = section_map.get(scope, "google_sheets")
+    env_prefix = env_prefix_map.get(scope, scope.upper())
+    defaults = {
+        "spreadsheet_id": "",
+        "catalog_sheet": SHEET_NAME_DEFAULTS["catalog_sheet"] if scope == "recuperacion" else "",
+        "entries_sheet": SHEET_NAME_DEFAULTS["entries_sheet"] if scope == "recuperacion" else "",
+        "exits_sheet": SHEET_NAME_DEFAULTS["exits_sheet"] if scope == "recuperacion" else "",
+    }
+    return {
+        "spreadsheet_id": get_config_value(
+            section, "spreadsheet_id", f"{env_prefix}_SPREADSHEET_ID", defaults["spreadsheet_id"]
+        ),
+        "catalog_sheet": get_config_value(
+            section, "catalog_sheet", f"{env_prefix}_CATALOG_SHEET", defaults["catalog_sheet"]
+        ),
+        "entries_sheet": get_config_value(
+            section, "entries_sheet", f"{env_prefix}_ENTRIES_SHEET", defaults["entries_sheet"]
+        ),
+        "exits_sheet": get_config_value(
+            section, "exits_sheet", f"{env_prefix}_EXITS_SHEET", defaults["exits_sheet"]
+        ),
+    }
 
 
 def load_sheet_dataframe(spreadsheet_id: str, worksheet_name: str) -> pd.DataFrame:
