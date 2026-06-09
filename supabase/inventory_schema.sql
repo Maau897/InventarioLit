@@ -99,6 +99,13 @@ create table if not exists public.inventory_seed_entries (
     loaded_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.inventory_seed_entries
+    drop constraint if exists inventory_seed_entries_inventory_scope_check;
+
+alter table public.inventory_seed_entries
+    add constraint inventory_seed_entries_inventory_scope_check
+    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal'));
+
 create index if not exists inventory_seed_entries_scope_idx
     on public.inventory_seed_entries (inventory_scope);
 
