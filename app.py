@@ -408,7 +408,7 @@ def load_inventory_bundle(
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
     if inventory_scope == "general":
         google_frames = load_google_sheet_frames(sheet_settings)
-        seed_df = repository.load_seed_entries_many(["general", "recuperacion", "avimex"])
+        seed_df = repository.load_seed_entries_many(["general", "recuperacion"])
         seed_frames = None
         if not seed_df.empty:
             seed_entries = seed_df.rename(
