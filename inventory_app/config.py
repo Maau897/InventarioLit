@@ -7,12 +7,11 @@ MATERIALS_WORKBOOK_PATH = BASE_DIR / "Inventario_material_y_reactivos_21_Enero_2
 LOCAL_DATA_DIR = BASE_DIR / "data"
 LOCAL_MOVEMENTS_PATH = LOCAL_DATA_DIR / "movimientos_app.csv"
 
-DEFAULT_SCOPE = "recuperacion"
+DEFAULT_SCOPE = "general"
 
 INVENTORY_SCOPES = {
-    "recuperacion": "Recuperacion",
-    "avimex": "Avimex",
-    "federal": "Federal / general",
+    "general": "General unificado",
+    "federal": "Federal",
 }
 
 SHEET_NAME_DEFAULTS = {

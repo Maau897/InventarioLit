@@ -55,12 +55,12 @@ def get_config_value(secret_section: str, key: str, env_key: str, default: str =
 
 def get_google_sheet_settings(scope: str = "recuperacion") -> dict[str, str]:
     section_map = {
-        "recuperacion": "google_sheets",
+        "general": "google_sheets",
         "avimex": "google_sheets_avimex",
         "federal": "google_sheets_federal",
     }
     env_prefix_map = {
-        "recuperacion": "RECOVERY",
+        "general": "RECOVERY",
         "avimex": "AVIMEX",
         "federal": "FEDERAL",
     }
@@ -68,9 +68,9 @@ def get_google_sheet_settings(scope: str = "recuperacion") -> dict[str, str]:
     env_prefix = env_prefix_map.get(scope, scope.upper())
     defaults = {
         "spreadsheet_id": "",
-        "catalog_sheet": SHEET_NAME_DEFAULTS["catalog_sheet"] if scope == "recuperacion" else "",
-        "entries_sheet": SHEET_NAME_DEFAULTS["entries_sheet"] if scope == "recuperacion" else "",
-        "exits_sheet": SHEET_NAME_DEFAULTS["exits_sheet"] if scope == "recuperacion" else "",
+        "catalog_sheet": SHEET_NAME_DEFAULTS["catalog_sheet"] if scope == "general" else "",
+        "entries_sheet": SHEET_NAME_DEFAULTS["entries_sheet"] if scope == "general" else "",
+        "exits_sheet": SHEET_NAME_DEFAULTS["exits_sheet"] if scope == "general" else "",
     }
     return {
         "spreadsheet_id": get_config_value(

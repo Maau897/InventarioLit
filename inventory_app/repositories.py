@@ -112,6 +112,13 @@ class LocalCsvRepository:
     def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
         return pd.DataFrame(columns=SEED_COLUMNS)
 
+    def load_seed_entries_many(self, inventory_scopes: list[str]) -> pd.DataFrame:
+        frames = [self.load_seed_entries(scope) for scope in inventory_scopes]
+        frames = [df for df in frames if not df.empty]
+        if not frames:
+            return pd.DataFrame(columns=SEED_COLUMNS)
+        return pd.concat(frames, ignore_index=True)
+
     def replace_seed_entries(
         self,
         inventory_scope: str,
@@ -164,6 +171,24 @@ class SupabaseRepository:
             self.client.table("inventory_seed_entries")
             .select("*")
             .eq("inventory_scope", inventory_scope)
+            .execute()
+        )
+        data = response.data or []
+        if not data:
+            return pd.DataFrame(columns=SEED_COLUMNS)
+        df = pd.DataFrame(data)
+        for column in SEED_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+        return df[SEED_COLUMNS]
+
+    def load_seed_entries_many(self, inventory_scopes: list[str]) -> pd.DataFrame:
+        if not inventory_scopes:
+            return pd.DataFrame(columns=SEED_COLUMNS)
+        response = (
+            self.client.table("inventory_seed_entries")
+            .select("*")
+            .in_("inventory_scope", inventory_scopes)
             .execute()
         )
         data = response.data or []

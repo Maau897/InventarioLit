@@ -406,9 +406,9 @@ def load_inventory_bundle(
     sheet_settings: dict[str, str],
     repository,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
-    if inventory_scope == "recuperacion":
+    if inventory_scope == "general":
         google_frames = load_google_sheet_frames(sheet_settings)
-        seed_df = repository.load_seed_entries("recuperacion")
+        seed_df = repository.load_seed_entries_many(["general", "recuperacion", "avimex"])
         seed_frames = None
         if not seed_df.empty:
             seed_entries = seed_df.rename(
@@ -441,26 +441,39 @@ def load_inventory_bundle(
                 ].drop_duplicates("codigo"),
             }
 
-        if recovery_workbook_source is not None:
-            excel_frames = load_workbook_frames(recovery_workbook_source)
+        if recovery_workbook_source is not None or materials_workbook_source is not None:
+            recovery_frames = (
+                load_workbook_frames(recovery_workbook_source)
+                if recovery_workbook_source is not None
+                else {"entradas": pd.DataFrame(columns=BASE_COLUMNS), "salidas": pd.DataFrame(columns=BASE_COLUMNS), "catalogo": pd.DataFrame()}
+            )
+            avimex_frames = (
+                load_material_inventory_frames(materials_workbook_source, "avimex")
+                if materials_workbook_source is not None
+                else {"entradas": pd.DataFrame(columns=BASE_COLUMNS), "salidas": pd.DataFrame(columns=BASE_COLUMNS), "catalogo": pd.DataFrame()}
+            )
             frames = {
                 "entradas": pd.concat(
                     [
                         harmonize_transaction_keys(google_frames["entradas"]),
-                        harmonize_transaction_keys(excel_frames["entradas"]),
+                        harmonize_transaction_keys(recovery_frames["entradas"]),
+                        harmonize_transaction_keys(avimex_frames["entradas"]),
                     ],
                     ignore_index=True,
                 ),
                 "salidas": pd.concat(
                     [
                         harmonize_transaction_keys(google_frames["salidas"]),
-                        harmonize_transaction_keys(excel_frames["salidas"]),
+                        harmonize_transaction_keys(recovery_frames["salidas"]),
                     ],
                     ignore_index=True,
                 ),
                 "catalogo": combine_catalogs(
                     google_frames.get("catalogo", pd.DataFrame()),
-                    excel_frames.get("catalogo", pd.DataFrame()),
+                    combine_catalogs(
+                        recovery_frames.get("catalogo", pd.DataFrame()),
+                        avimex_frames.get("catalogo", pd.DataFrame()),
+                    ),
                 ),
             }
         elif seed_frames is not None:
@@ -600,8 +613,9 @@ def main() -> None:
 
     recovery_workbook_source = None
     materials_workbook_source = None
-    if inventory_scope == "recuperacion":
+    if inventory_scope == "general":
         recovery_workbook_source = resolve_workbook_source(recovery_workbook_path)
+        materials_workbook_source = resolve_workbook_source(materials_workbook_path)
     else:
         materials_workbook_source = resolve_workbook_source(materials_workbook_path)
 
@@ -618,7 +632,12 @@ def main() -> None:
         return
 
     app_movements = repository.load_movements()
-    scope_movements = app_movements.loc[app_movements["inventory_scope"] == inventory_scope].copy()
+    if inventory_scope == "general":
+        scope_movements = app_movements.loc[
+            app_movements["inventory_scope"].isin(["general", "recuperacion", "avimex"])
+        ].copy()
+    else:
+        scope_movements = app_movements.loc[app_movements["inventory_scope"] == inventory_scope].copy()
     inventory_df, entry_df, exit_df, catalog_df = build_inventory_snapshot(
         frames["entradas"],
         frames["salidas"],
@@ -626,28 +645,23 @@ def main() -> None:
         catalog_df=frames.get("catalogo"),
     )
 
-    if inventory_scope == "recuperacion":
+    if inventory_scope == "general":
         general_inventory_df = enrich_inventory_with_counts(inventory_df, registry_df, results_df)
     else:
         general_inventory_df = inventory_df.copy()
 
     st.markdown(f"### Inventario: {INVENTORY_SCOPES[inventory_scope]}")
-    if inventory_scope == "recuperacion":
-        if recovery_workbook_source is None:
-            st.caption("Fuente: Google Sheets de recuperacion.")
-            st.info("No se encontro el Excel local de recuperacion. La app sigue operando solo con Google Sheets.")
+    if inventory_scope == "general":
+        if recovery_workbook_source is None and materials_workbook_source is None:
+            st.caption("Fuente: Google Sheets unificado.")
+            st.info("No se encontraron los Excels locales. La app sigue operando con Google Sheets y/o semillas en Supabase.")
         else:
-            st.caption("Fuente: Google Sheets + Excel local de recuperacion.")
-    elif inventory_scope == "avimex":
-        if sheet_settings.get("spreadsheet_id", "").strip():
-            st.caption("Fuente: Google Sheets de Avimex.")
-        else:
-            st.caption("Fuente: hoja `Avimex` enriquecida con `Inventario Final` cuando faltan claves.")
+            st.caption("Fuente: Google Sheets + semillas/historico local unificado.")
     else:
         if sheet_settings.get("spreadsheet_id", "").strip():
-            st.caption("Fuente: Google Sheets de Federal/general.")
+            st.caption("Fuente: Google Sheets de Federal.")
         else:
-            st.caption("Fuente: `Presupuesto federal`, `Reactivos` e `Inventario Final` para arrancar el inventario general/federal.")
+            st.caption("Fuente: `Presupuesto federal`, `Reactivos` e `Inventario Final` para arrancar Federal.")
 
     total_items = len(general_inventory_df)
     total_stock = float(general_inventory_df["existencia"].fillna(0).sum()) if not general_inventory_df.empty else 0

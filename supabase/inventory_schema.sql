@@ -45,18 +45,12 @@ alter table public.inventory_movements
 alter table public.inventory_movements
     alter column inventory_scope set not null;
 
-do $$
-begin
-    if not exists (
-        select 1
-        from pg_constraint
-        where conname = 'inventory_movements_inventory_scope_check'
-    ) then
-        alter table public.inventory_movements
-            add constraint inventory_movements_inventory_scope_check
-            check (inventory_scope in ('recuperacion', 'avimex', 'federal'));
-    end if;
-end $$;
+alter table public.inventory_movements
+    drop constraint if exists inventory_movements_inventory_scope_check;
+
+alter table public.inventory_movements
+    add constraint inventory_movements_inventory_scope_check
+    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal'));
 
 do $$
 begin
@@ -89,7 +83,7 @@ create index if not exists inventory_movements_scope_codigo_idx
 create table if not exists public.inventory_seed_entries (
     id bigint generated always as identity primary key,
     inventory_scope text not null
-        check (inventory_scope in ('recuperacion', 'avimex', 'federal')),
+        check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal')),
     codigo_local text,
     codigo text not null,
     descripcion text not null,

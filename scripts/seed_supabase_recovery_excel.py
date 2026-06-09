@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import argparse
 
 import pandas as pd
 
@@ -13,8 +14,13 @@ from inventory_app.repositories import get_repository
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--path", default=str(RECOVERY_WORKBOOK_PATH))
+    parser.add_argument("--scope", default="general")
+    args = parser.parse_args()
+
     repository = get_repository()
-    workbook_path = Path(RECOVERY_WORKBOOK_PATH)
+    workbook_path = Path(args.path)
     if not workbook_path.exists():
         raise FileNotFoundError(f"No existe el archivo base: {workbook_path}")
 
@@ -43,11 +49,11 @@ def main() -> None:
     ].copy()
     seed_df = seed_df.rename(columns={"existencia": "cantidad"})
     repository.replace_seed_entries(
-        "recuperacion",
+        args.scope,
         seed_df,
         source_label="recovery_excel_seed",
     )
-    print(f"recuperacion: {len(seed_df)} registros sembrados en Supabase")
+    print(f"{args.scope}: {len(seed_df)} registros sembrados en Supabase")
 
 
 if __name__ == "__main__":
