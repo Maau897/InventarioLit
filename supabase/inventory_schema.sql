@@ -84,3 +84,29 @@ create index if not exists inventory_movements_type_idx
 
 create index if not exists inventory_movements_scope_codigo_idx
     on public.inventory_movements (inventory_scope, codigo);
+
+
+create table if not exists public.inventory_seed_entries (
+    id bigint generated always as identity primary key,
+    inventory_scope text not null
+        check (inventory_scope in ('recuperacion', 'avimex', 'federal')),
+    codigo_local text,
+    codigo text not null,
+    descripcion text not null,
+    catalogo text,
+    marca text,
+    lote text,
+    cantidad numeric not null default 0,
+    unidad text,
+    caducidad text,
+    ubicacion text,
+    categoria text,
+    source_label text,
+    loaded_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists inventory_seed_entries_scope_idx
+    on public.inventory_seed_entries (inventory_scope);
+
+create index if not exists inventory_seed_entries_scope_codigo_idx
+    on public.inventory_seed_entries (inventory_scope, codigo);

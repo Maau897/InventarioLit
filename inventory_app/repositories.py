@@ -6,6 +6,23 @@ import pandas as pd
 
 from inventory_app.config import LOCAL_DATA_DIR, LOCAL_MOVEMENTS_PATH
 
+SEED_COLUMNS = [
+    "inventory_scope",
+    "codigo_local",
+    "codigo",
+    "descripcion",
+    "catalogo",
+    "marca",
+    "lote",
+    "cantidad",
+    "unidad",
+    "caducidad",
+    "ubicacion",
+    "categoria",
+    "source_label",
+    "loaded_at",
+]
+
 MOVEMENT_COLUMNS = [
     "movement_uid",
     "inventory_scope",
@@ -28,6 +45,15 @@ MOVEMENT_COLUMNS = [
     "verificado_por",
     "captured_at",
 ]
+
+
+def _get_config_value(secret_key: str, env_key: str, default: str = "") -> str:
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get(secret_key, os.getenv(env_key, default)))
+    except Exception:
+        return str(os.getenv(env_key, default))
 
 
 def _ensure_movement_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -76,13 +102,26 @@ class LocalCsvRepository:
             merged = pd.concat([merged, missing_rows], axis=0)
         merged.reset_index().to_csv(self.path, index=False)
 
+    def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
+        return pd.DataFrame(columns=SEED_COLUMNS)
+
+    def replace_seed_entries(
+        self,
+        inventory_scope: str,
+        seed_df: pd.DataFrame,
+        source_label: str = "",
+    ) -> None:
+        return None
+
 
 class SupabaseRepository:
     def __init__(self) -> None:
         from supabase import create_client
 
-        self.url = os.getenv("SUPABASE_URL", "")
-        self.key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        self.url = _get_config_value("supabase_url", "SUPABASE_URL", "")
+        self.key = _get_config_value("supabase_service_role_key", "SUPABASE_SERVICE_ROLE_KEY", "")
+        if not self.key:
+            self.key = _get_config_value("supabase_key", "SUPABASE_KEY", "")
         self.client = create_client(self.url, self.key)
         self.local_backup = LocalCsvRepository()
 
@@ -112,10 +151,58 @@ class SupabaseRepository:
             ).execute()
         self.local_backup.upsert_movements(payload_df)
 
+    def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
+        response = (
+            self.client.table("inventory_seed_entries")
+            .select("*")
+            .eq("inventory_scope", inventory_scope)
+            .execute()
+        )
+        data = response.data or []
+        if not data:
+            return pd.DataFrame(columns=SEED_COLUMNS)
+        df = pd.DataFrame(data)
+        for column in SEED_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+        return df[SEED_COLUMNS]
+
+    def replace_seed_entries(
+        self,
+        inventory_scope: str,
+        seed_df: pd.DataFrame,
+        source_label: str = "",
+    ) -> None:
+        delete_query = (
+            self.client.table("inventory_seed_entries")
+            .delete()
+            .eq("inventory_scope", inventory_scope)
+        )
+        delete_query.execute()
+
+        if seed_df.empty:
+            return
+
+        payload_df = seed_df.copy()
+        for column in SEED_COLUMNS:
+            if column not in payload_df.columns:
+                payload_df[column] = None
+        payload_df["inventory_scope"] = inventory_scope
+        payload_df["source_label"] = source_label
+        payload_df["loaded_at"] = pd.Timestamp.now().isoformat()
+        payload_df = payload_df[SEED_COLUMNS]
+        self.client.table("inventory_seed_entries").insert(
+            payload_df.to_dict(orient="records")
+        ).execute()
+
 
 def get_repository():
     supabase_ready = bool(
-        os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        _get_config_value("supabase_url", "SUPABASE_URL", "")
+        and (
+            _get_config_value("supabase_service_role_key", "SUPABASE_SERVICE_ROLE_KEY", "")
+            or _get_config_value("supabase_key", "SUPABASE_KEY", "")
+        )
     )
     if supabase_ready:
         return SupabaseRepository()

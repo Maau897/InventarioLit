@@ -11,6 +11,7 @@ from inventory_app.config import (
     SHEET_NAME_DEFAULTS,
 )
 from inventory_app.excel_loader import (
+    BASE_COLUMNS,
     build_catalog_options,
     build_inventory_snapshot,
     build_product_search_links,
@@ -403,6 +404,7 @@ def load_inventory_bundle(
     recovery_workbook_source,
     materials_workbook_source,
     sheet_settings: dict[str, str],
+    repository,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
     if inventory_scope == "recuperacion":
         google_frames = load_google_sheet_frames(sheet_settings)
@@ -440,9 +442,42 @@ def load_inventory_bundle(
         frames = load_google_sheet_frames(sheet_settings)
         return frames, pd.DataFrame(), pd.DataFrame()
 
+    seed_df = repository.load_seed_entries(inventory_scope)
+    if not seed_df.empty:
+        seed_entries = seed_df.rename(
+            columns={
+                "source_label": "responsable",
+                "loaded_at": "fecha",
+            }
+        ).copy()
+        for column in BASE_COLUMNS:
+            if column not in seed_entries.columns:
+                seed_entries[column] = None
+        seed_entries = seed_entries[BASE_COLUMNS].copy()
+        seed_entries["fecha"] = pd.to_datetime(seed_entries["fecha"], errors="coerce")
+        frames = {
+            "entradas": seed_entries,
+            "salidas": pd.DataFrame(columns=BASE_COLUMNS),
+            "catalogo": seed_entries[
+                [
+                    "codigo",
+                    "codigo_local",
+                    "descripcion",
+                    "catalogo",
+                    "marca",
+                    "lote",
+                    "unidad",
+                    "caducidad",
+                    "ubicacion",
+                    "categoria",
+                ]
+            ].drop_duplicates("codigo"),
+        }
+        return frames, pd.DataFrame(), pd.DataFrame()
+
     if materials_workbook_source is None:
         raise RuntimeError(
-            f"No hay Google Sheets configurado para `{INVENTORY_SCOPES[inventory_scope]}` y tampoco existe el Excel local."
+            f"No hay Google Sheets configurado para `{INVENTORY_SCOPES[inventory_scope]}`, no hay semilla en Supabase y tampoco existe el Excel local."
         )
 
     frames = load_material_inventory_frames(materials_workbook_source, inventory_scope)
@@ -528,6 +563,7 @@ def main() -> None:
             recovery_workbook_source,
             materials_workbook_source,
             sheet_settings,
+            repository,
         )
     except Exception as exc:
         explain_load_error(exc, inventory_scope)
