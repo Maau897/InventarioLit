@@ -1,4 +1,9 @@
 from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from inventory_app.config import MATERIALS_WORKBOOK_PATH
 from inventory_app.excel_loader import load_material_inventory_frames

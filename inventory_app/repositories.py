@@ -71,6 +71,13 @@ def _ensure_movement_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[MOVEMENT_COLUMNS]
 
 
+def _sanitize_records_df(df: pd.DataFrame) -> pd.DataFrame:
+    cleaned = df.copy()
+    cleaned = cleaned.replace({pd.NA: None})
+    cleaned = cleaned.where(pd.notna(cleaned), None)
+    return cleaned
+
+
 @dataclass
 class LocalCsvRepository:
     path: str = str(LOCAL_MOVEMENTS_PATH)
@@ -143,6 +150,7 @@ class SupabaseRepository:
 
     def upsert_movements(self, movements_df: pd.DataFrame) -> None:
         payload_df = _ensure_movement_columns(movements_df)
+        payload_df = _sanitize_records_df(payload_df)
         records = payload_df.to_dict(orient="records")
         if records:
             self.client.table("inventory_movements").upsert(
@@ -191,6 +199,7 @@ class SupabaseRepository:
         payload_df["source_label"] = source_label
         payload_df["loaded_at"] = pd.Timestamp.now().isoformat()
         payload_df = payload_df[SEED_COLUMNS]
+        payload_df = _sanitize_records_df(payload_df)
         self.client.table("inventory_seed_entries").insert(
             payload_df.to_dict(orient="records")
         ).execute()

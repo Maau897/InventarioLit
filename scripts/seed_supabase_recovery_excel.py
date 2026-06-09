@@ -1,6 +1,11 @@
 from pathlib import Path
+import sys
 
 import pandas as pd
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from inventory_app.config import RECOVERY_WORKBOOK_PATH
 from inventory_app.excel_loader import build_inventory_snapshot, load_workbook_frames

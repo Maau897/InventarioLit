@@ -278,6 +278,7 @@ def _catalog_from_movements(entry_df: pd.DataFrame, exit_df: pd.DataFrame) -> pd
             ]
         )
     combined = pd.concat(frames, ignore_index=True)
+    combined["fecha"] = pd.to_datetime(combined["fecha"], errors="coerce")
     combined = combined.sort_values("fecha", ascending=False, na_position="last")
     catalog = combined.groupby("codigo", as_index=False).first()
     return catalog[
@@ -315,6 +316,10 @@ def build_inventory_snapshot(
 
     entry_df = pd.concat([source_entries, app_entries], ignore_index=True)
     exit_df = pd.concat([source_exits, app_exits], ignore_index=True)
+    entry_df["fecha"] = pd.to_datetime(entry_df["fecha"], errors="coerce")
+    exit_df["fecha"] = pd.to_datetime(exit_df["fecha"], errors="coerce")
+    entry_df["cantidad"] = pd.to_numeric(entry_df["cantidad"], errors="coerce").fillna(0)
+    exit_df["cantidad"] = pd.to_numeric(exit_df["cantidad"], errors="coerce").fillna(0)
     movement_catalog_df = _catalog_from_movements(entry_df, exit_df)
 
     if catalog_df is None or catalog_df.empty:
