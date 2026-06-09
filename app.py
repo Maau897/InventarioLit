@@ -408,6 +408,39 @@ def load_inventory_bundle(
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
     if inventory_scope == "recuperacion":
         google_frames = load_google_sheet_frames(sheet_settings)
+        seed_df = repository.load_seed_entries("recuperacion")
+        seed_frames = None
+        if not seed_df.empty:
+            seed_entries = seed_df.rename(
+                columns={
+                    "source_label": "responsable",
+                    "loaded_at": "fecha",
+                }
+            ).copy()
+            for column in BASE_COLUMNS:
+                if column not in seed_entries.columns:
+                    seed_entries[column] = None
+            seed_entries = seed_entries[BASE_COLUMNS].copy()
+            seed_entries["fecha"] = pd.to_datetime(seed_entries["fecha"], errors="coerce")
+            seed_frames = {
+                "entradas": seed_entries,
+                "salidas": pd.DataFrame(columns=BASE_COLUMNS),
+                "catalogo": seed_entries[
+                    [
+                        "codigo",
+                        "codigo_local",
+                        "descripcion",
+                        "catalogo",
+                        "marca",
+                        "lote",
+                        "unidad",
+                        "caducidad",
+                        "ubicacion",
+                        "categoria",
+                    ]
+                ].drop_duplicates("codigo"),
+            }
+
         if recovery_workbook_source is not None:
             excel_frames = load_workbook_frames(recovery_workbook_source)
             frames = {
@@ -428,6 +461,21 @@ def load_inventory_bundle(
                 "catalogo": combine_catalogs(
                     google_frames.get("catalogo", pd.DataFrame()),
                     excel_frames.get("catalogo", pd.DataFrame()),
+                ),
+            }
+        elif seed_frames is not None:
+            frames = {
+                "entradas": pd.concat(
+                    [
+                        harmonize_transaction_keys(google_frames["entradas"]),
+                        harmonize_transaction_keys(seed_frames["entradas"]),
+                    ],
+                    ignore_index=True,
+                ),
+                "salidas": harmonize_transaction_keys(google_frames["salidas"]),
+                "catalogo": combine_catalogs(
+                    google_frames.get("catalogo", pd.DataFrame()),
+                    seed_frames.get("catalogo", pd.DataFrame()),
                 ),
             }
         else:
