@@ -327,36 +327,33 @@ def build_inventory_snapshot(
     else:
         catalog_df = clean_catalog_sheet(catalog_df)
         catalog_df = catalog_df.merge(
-            movement_catalog_df[
-                [
-                    "codigo",
-                    "codigo_local",
-                    "lote",
-                    "unidad",
-                    "caducidad",
-                    "ubicacion",
-                    "categoria",
-                ]
-            ],
+            movement_catalog_df,
             on="codigo",
-            how="left",
+            how="outer",
             suffixes=("", "_mov"),
         )
-        for column in ["codigo_local", "lote", "unidad", "caducidad", "ubicacion", "categoria"]:
+        for column in [
+            "codigo_local",
+            "descripcion",
+            "catalogo",
+            "marca",
+            "lote",
+            "unidad",
+            "caducidad",
+            "ubicacion",
+            "categoria",
+        ]:
+            mov_column = f"{column}_mov"
+            if mov_column not in catalog_df.columns:
+                continue
             catalog_df[column] = catalog_df[column].where(
                 catalog_df[column].fillna("").astype(str).str.strip() != "",
-                catalog_df[f"{column}_mov"],
+                catalog_df[mov_column],
             )
-        catalog_df = catalog_df.drop(
-            columns=[
-                "codigo_local_mov",
-                "lote_mov",
-                "unidad_mov",
-                "caducidad_mov",
-                "ubicacion_mov",
-                "categoria_mov",
-            ]
-        )
+        drop_columns = [column for column in catalog_df.columns if column.endswith("_mov")]
+        if drop_columns:
+            catalog_df = catalog_df.drop(columns=drop_columns)
+        catalog_df = catalog_df.drop_duplicates("codigo", keep="first")
 
     entry_totals = entry_df.groupby("codigo", as_index=False)["cantidad"].sum().rename(
         columns={"cantidad": "entrada"}
