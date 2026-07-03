@@ -1019,6 +1019,22 @@ def merge_inventory_frames(*frames_list: dict[str, pd.DataFrame]) -> dict[str, p
     return {"entradas": entries, "salidas": exits, "catalogo": catalog}
 
 
+def load_seed_inventory_frames(seed_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    if seed_df is None or seed_df.empty:
+        return {"entradas": _empty_base_df(), "salidas": _empty_base_df(), "catalogo": pd.DataFrame()}
+    entries = seed_df.copy()
+    if "id_registro" not in entries.columns:
+        entries["id_registro"] = entries.get("source_label", "BASE_OFICIAL")
+    if "fecha" not in entries.columns:
+        entries["fecha"] = entries.get("loaded_at", pd.Timestamp.today().date())
+    if "responsable" not in entries.columns:
+        entries["responsable"] = "Base oficial"
+    entry_df = harmonize_transaction_keys(_base_from_records(entries.to_dict(orient="records")))
+    exit_df = _empty_base_df()
+    catalog_df = _catalog_from_movements(entry_df, exit_df)
+    return {"entradas": entry_df, "salidas": exit_df, "catalogo": catalog_df}
+
+
 def _base_from_records(records: list[dict[str, object]]) -> pd.DataFrame:
     if not records:
         return _empty_base_df()

@@ -4,7 +4,12 @@ from uuid import uuid4
 
 import pandas as pd
 
-from inventory_app.config import LOCAL_DATA_DIR, LOCAL_MOVEMENTS_PATH, LOCAL_REGULARIZATIONS_PATH
+from inventory_app.config import (
+    LOCAL_DATA_DIR,
+    LOCAL_MOVEMENTS_PATH,
+    LOCAL_REGULARIZATIONS_PATH,
+    LOCAL_SEED_ENTRIES_PATH,
+)
 
 SEED_COLUMNS = [
     "inventory_scope",
@@ -120,6 +125,7 @@ def _ensure_regularization_columns(df: pd.DataFrame) -> pd.DataFrame:
 class LocalCsvRepository:
     path: str = str(LOCAL_MOVEMENTS_PATH)
     regularizations_path: str = str(LOCAL_REGULARIZATIONS_PATH)
+    seed_entries_path: str = str(LOCAL_SEED_ENTRIES_PATH)
 
     def load_movements(self) -> pd.DataFrame:
         LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,7 +155,15 @@ class LocalCsvRepository:
         merged.reset_index().to_csv(self.path, index=False)
 
     def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
-        return pd.DataFrame(columns=SEED_COLUMNS)
+        LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if not LOCAL_SEED_ENTRIES_PATH.exists():
+            return pd.DataFrame(columns=SEED_COLUMNS)
+        df = pd.read_csv(self.seed_entries_path)
+        for column in SEED_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+        df["inventory_scope"] = df["inventory_scope"].fillna("").astype(str).str.strip()
+        return df.loc[df["inventory_scope"] == inventory_scope, SEED_COLUMNS].copy()
 
     def load_seed_entries_many(self, inventory_scopes: list[str]) -> pd.DataFrame:
         frames = [self.load_seed_entries(scope) for scope in inventory_scopes]
@@ -164,7 +178,26 @@ class LocalCsvRepository:
         seed_df: pd.DataFrame,
         source_label: str = "",
     ) -> None:
-        return None
+        LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if LOCAL_SEED_ENTRIES_PATH.exists():
+            existing = pd.read_csv(self.seed_entries_path)
+            for column in SEED_COLUMNS:
+                if column not in existing.columns:
+                    existing[column] = None
+            existing = existing.loc[existing["inventory_scope"].astype(str) != inventory_scope, SEED_COLUMNS].copy()
+        else:
+            existing = pd.DataFrame(columns=SEED_COLUMNS)
+
+        incoming = seed_df.copy()
+        for column in SEED_COLUMNS:
+            if column not in incoming.columns:
+                incoming[column] = None
+        incoming["inventory_scope"] = inventory_scope
+        incoming["source_label"] = source_label
+        incoming["loaded_at"] = pd.Timestamp.now().isoformat()
+        incoming = incoming[SEED_COLUMNS]
+        updated = pd.concat([existing, incoming], ignore_index=True)
+        updated.to_csv(self.seed_entries_path, index=False)
 
     def load_regularizations(self) -> pd.DataFrame:
         LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)

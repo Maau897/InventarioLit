@@ -30,6 +30,7 @@ from inventory_app.excel_loader import (
     load_indicator_inventory_frames,
     load_material_inventory_frames,
     load_recovery_template_frames,
+    load_seed_inventory_frames,
     merge_inventory_frames,
     normalize_match_key,
     parse_mixed_datetime_series,
@@ -1133,19 +1134,25 @@ def load_inventory_bundle(
     indicators_workbook_source,
     materials_workbook_source,
     repository,
+    prefer_seed: bool = True,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
+    if prefer_seed:
+        seed_df = repository.load_seed_entries(inventory_scope)
+        if not seed_df.empty:
+            return load_seed_inventory_frames(seed_df), pd.DataFrame(), pd.DataFrame()
+
     if inventory_scope == "lit":
         if indicators_workbook_source is None:
-            raise RuntimeError("No existe el archivo de indicadores de desempeño de los almacenes.")
+            raise RuntimeError("No hay base oficial sembrada y tampoco existe el archivo de indicadores de desempeño de los almacenes.")
         if recovery_workbook_source is None:
-            raise RuntimeError("No existe el inventario de recuperacion.")
+            raise RuntimeError("No hay base oficial sembrada y tampoco existe el inventario de recuperacion.")
         indicator_frames = load_indicator_inventory_frames(indicators_workbook_source, "JUL 26")
         recovery_frames = load_recovery_template_frames(recovery_workbook_source)
         return merge_inventory_frames(indicator_frames, recovery_frames), pd.DataFrame(), pd.DataFrame()
 
     if inventory_scope == "frontera":
         if materials_workbook_source is None:
-            raise RuntimeError("No existe el archivo local para Frontera/Federal.")
+            raise RuntimeError("No hay base oficial sembrada y tampoco existe el archivo local para Frontera/Federal.")
         return load_material_inventory_frames(materials_workbook_source, "federal"), pd.DataFrame(), pd.DataFrame()
 
     raise RuntimeError(f"Inventario no soportado: {inventory_scope}")
@@ -1182,39 +1189,58 @@ def main() -> None:
         format_func=lambda key: INVENTORY_SCOPES[key],
     )
 
-    recovery_workbook_path = st.sidebar.text_input(
-        "Excel de recuperacion",
-        value=str(RECOVERY_WORKBOOK_PATH),
-    )
-    recovery_upload = st.sidebar.file_uploader(
-        "Subir Excel de recuperacion",
-        type=["xlsx", "xlsm", "xls"],
-        key="recovery_upload",
-    )
-    indicators_workbook_path = st.sidebar.text_input(
-        "Indicadores de almacenes",
-        value=str(INDICATORS_WORKBOOK_PATH),
-    )
-    indicators_upload = st.sidebar.file_uploader(
-        "Subir indicadores de almacenes",
-        type=["xlsx", "xlsm", "xls"],
-        key="indicators_upload",
-    )
-    materials_workbook_path = st.sidebar.text_input(
-        "Excel Frontera/Federal",
-        value=str(MATERIALS_WORKBOOK_PATH),
-    )
-    materials_upload = st.sidebar.file_uploader(
-        "Subir Excel Frontera/Federal",
-        type=["xlsx", "xlsm", "xls"],
-        key="materials_upload",
-    )
+    seed_available = not repository.load_seed_entries(inventory_scope).empty
+    if seed_available:
+        st.sidebar.success("Base oficial cargada.")
+    else:
+        st.sidebar.warning("No hay base oficial sembrada; se usaran Excel como respaldo.")
+
+    recovery_workbook_path = str(RECOVERY_WORKBOOK_PATH)
+    indicators_workbook_path = str(INDICATORS_WORKBOOK_PATH)
+    materials_workbook_path = str(MATERIALS_WORKBOOK_PATH)
+    recovery_upload = None
+    indicators_upload = None
+    materials_upload = None
+    use_excel_fallback = False
+    with st.sidebar.expander("Reconstruir desde Excel", expanded=not seed_available):
+        use_excel_fallback = st.checkbox(
+            "Usar Excel temporalmente en lugar de la base oficial",
+            value=not seed_available,
+            help="Activalo solo para revisar o reconstruir la base oficial.",
+        )
+        recovery_workbook_path = st.text_input(
+            "Excel de recuperacion",
+            value=recovery_workbook_path,
+        )
+        recovery_upload = st.file_uploader(
+            "Subir Excel de recuperacion",
+            type=["xlsx", "xlsm", "xls"],
+            key="recovery_upload",
+        )
+        indicators_workbook_path = st.text_input(
+            "Indicadores de almacenes",
+            value=indicators_workbook_path,
+        )
+        indicators_upload = st.file_uploader(
+            "Subir indicadores de almacenes",
+            type=["xlsx", "xlsm", "xls"],
+            key="indicators_upload",
+        )
+        materials_workbook_path = st.text_input(
+            "Excel Frontera/Federal",
+            value=materials_workbook_path,
+        )
+        materials_upload = st.file_uploader(
+            "Subir Excel Frontera/Federal",
+            type=["xlsx", "xlsm", "xls"],
+            key="materials_upload",
+        )
 
     st.sidebar.markdown("**Fuente configurada**")
     if inventory_scope == "lit":
-        st.sidebar.caption("LIT usa JUL 26 como existencia real y recuperacion como plantilla/catalogo. No usa Google Sheets como base.")
+        st.sidebar.caption("LIT usa la base oficial si ya esta sembrada. Los Excel quedan como respaldo para reconstruirla.")
     else:
-        st.sidebar.caption("Frontera usa el listado federal del Excel local.")
+        st.sidebar.caption("Frontera usa la base oficial si ya esta sembrada. El Excel local queda como respaldo.")
     recovery_workbook_source = None
     indicators_workbook_source = None
     materials_workbook_source = None
@@ -1231,6 +1257,7 @@ def main() -> None:
             indicators_workbook_source,
             materials_workbook_source,
             repository,
+            prefer_seed=not use_excel_fallback,
         )
     except Exception as exc:
         explain_load_error(exc, inventory_scope)
@@ -1261,10 +1288,13 @@ def main() -> None:
     active_inventory_df = general_inventory_df.loc[general_inventory_df["existencia"].fillna(0) > 0].copy()
 
     st.markdown(f"### Inventario: {INVENTORY_SCOPES[inventory_scope]}")
-    if inventory_scope == "lit":
-        st.caption("Fuente: conteo real JUL 26. Recuperacion se usa como plantilla/catalogo, no como existencia.")
+    using_seed = seed_available and not use_excel_fallback
+    if using_seed:
+        st.caption("Fuente: base oficial sembrada. Los Excel ya no son necesarios para operar.")
+    elif inventory_scope == "lit":
+        st.caption("Fuente: base oficial LIT. Si no existe semilla, se reconstruye con JUL 26 + plantilla de recuperacion.")
     else:
-        st.caption("Fuente: listado federal/frontera.")
+        st.caption("Fuente: base oficial Frontera. Si no existe semilla, se reconstruye con el listado federal local.")
 
     total_items = len(active_inventory_df)
     total_stock = float(active_inventory_df["existencia"].fillna(0).sum()) if not active_inventory_df.empty else 0
@@ -1296,7 +1326,7 @@ def main() -> None:
         if inventory_scope == "lit":
             st.info(
                 f"Mostrando {len(active_inventory_df)} claves con existencia real. "
-                f"La plantilla de recuperacion queda disponible para busqueda y captura, pero no suma existencia."
+                f"Las claves de plantilla quedan disponibles para busqueda y captura, pero no suman existencia."
             )
         show_template_rows = st.checkbox(
             "Mostrar tambien claves de plantilla sin existencia",

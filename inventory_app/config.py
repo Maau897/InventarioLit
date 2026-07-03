@@ -8,6 +8,7 @@ INDICATORS_WORKBOOK_PATH = BASE_DIR / "Indicadores de desempo de los almacenes.x
 LOCAL_DATA_DIR = BASE_DIR / "data"
 LOCAL_MOVEMENTS_PATH = LOCAL_DATA_DIR / "movimientos_app.csv"
 LOCAL_REGULARIZATIONS_PATH = LOCAL_DATA_DIR / "regularizaciones_iniciales.csv"
+LOCAL_SEED_ENTRIES_PATH = LOCAL_DATA_DIR / "inventory_seed_entries.csv"
 
 DEFAULT_SCOPE = "lit"
 
