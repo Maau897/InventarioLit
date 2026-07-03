@@ -1,10 +1,14 @@
-# Inventario INER
+# Inventario General INER
 
-App en Streamlit para operar tres inventarios:
+App en Streamlit para operar el inventario LIT y el listado Frontera.
 
-- `recuperacion`: Google Sheets + Excel local de recuperacion
-- `avimex`: Excel `Inventario_material_y_reactivos_21_Enero_2026.xlsx`
-- `federal`: base inicial desde `Presupuesto federal`, `Reactivos` e `Inventario Final`
+## Fuentes actuales
+
+- `LIT`: usa el conteo real de la hoja `JUL 26` del archivo de indicadores de almacenes.
+- `LIT`: usa el inventario de recuperacion solo como plantilla/catalogo; no suma existencia.
+- `Frontera`: usa el listado federal/local como fuente separada.
+
+Los archivos Excel no se suben al repositorio. En local se pueden leer desde la carpeta del proyecto; en Streamlit Cloud se cargan desde la barra lateral.
 
 ## Ejecutar local
 
@@ -13,24 +17,33 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Despliegue en Streamlit Cloud
+## Deploy en Streamlit Cloud
 
-1. Sube este repositorio a GitHub sin los archivos sensibles.
-2. En Streamlit Cloud configura manualmente los secrets de Google Sheets y, si aplica, los de Supabase.
-3. En la app desplegada:
-   - `recuperacion` usa Google Sheets y necesita además subir el Excel de recuperación en la barra lateral.
-   - `avimex` y `federal` usan el Excel `Inventario_material_y_reactivos_21_Enero_2026.xlsx`, también vía upload en la barra lateral.
+1. Sube solo el codigo a GitHub.
+2. No subas inventarios, formatos, credenciales ni respaldos locales.
+3. Configura secrets en Streamlit Cloud si se usara Supabase.
+4. En la app desplegada, sube los Excel desde la barra lateral cuando la app los pida.
 
-## Datos sensibles excluidos
+## Archivos excluidos
 
-No se deben subir al repositorio:
+El `.gitignore` excluye:
 
-- credenciales de Google Cloud
-- archivos `.xlsx`, `.xlsm`, `.xls`
+- `.streamlit/`
+- `secrets.toml`
+- credenciales `.json`
+- Excel: `.xlsx`, `.xlsm`, `.xls`
 - formatos `.docx`
-- respaldos CSV locales
+- `data/`
+- `outputs/`
+- `node_modules/`
 
 ## Supabase
 
-El esquema base está en `supabase/inventory_schema.sql`.
-Ejecuta ese script antes de activar persistencia remota.
+El esquema base esta en `supabase/inventory_schema.sql`.
+
+Si se activa persistencia remota, configura en secrets:
+
+```toml
+supabase_url = "..."
+supabase_key = "..."
+```

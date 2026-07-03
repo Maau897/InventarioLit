@@ -50,7 +50,7 @@ alter table public.inventory_movements
 
 alter table public.inventory_movements
     add constraint inventory_movements_inventory_scope_check
-    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal'));
+    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal', 'lit', 'frontera'));
 
 do $$
 begin
@@ -104,7 +104,7 @@ alter table public.inventory_seed_entries
 
 alter table public.inventory_seed_entries
     add constraint inventory_seed_entries_inventory_scope_check
-    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal'));
+    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal', 'lit', 'frontera'));
 
 create index if not exists inventory_seed_entries_scope_idx
     on public.inventory_seed_entries (inventory_scope);

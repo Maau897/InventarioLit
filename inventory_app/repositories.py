@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pandas as pd
 
-from inventory_app.config import LOCAL_DATA_DIR, LOCAL_MOVEMENTS_PATH
+from inventory_app.config import LOCAL_DATA_DIR, LOCAL_MOVEMENTS_PATH, LOCAL_REGULARIZATIONS_PATH
 
 SEED_COLUMNS = [
     "inventory_scope",
@@ -46,6 +46,29 @@ MOVEMENT_COLUMNS = [
     "captured_at",
 ]
 
+REGULARIZATION_COLUMNS = [
+    "regularization_uid",
+    "inventory_scope",
+    "tipo_regularizacion",
+    "fecha_corte",
+    "fecha_validacion",
+    "codigo",
+    "descripcion",
+    "catalogo",
+    "marca",
+    "lote",
+    "cantidad",
+    "unidad",
+    "caducidad",
+    "ubicacion",
+    "categoria",
+    "soporte_disponible",
+    "folio_origen",
+    "comentario_regularizacion",
+    "validado_por",
+    "captured_at",
+]
+
 
 def _get_config_value(secret_key: str, env_key: str, default: str = "") -> str:
     try:
@@ -78,9 +101,25 @@ def _sanitize_records_df(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def _ensure_regularization_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for column in REGULARIZATION_COLUMNS:
+        if column not in df.columns:
+            df[column] = None
+    df["regularization_uid"] = df["regularization_uid"].fillna("").astype(str).str.strip()
+    missing_uid_mask = df["regularization_uid"] == ""
+    if missing_uid_mask.any():
+        df.loc[missing_uid_mask, "regularization_uid"] = [str(uuid4()) for _ in range(missing_uid_mask.sum())]
+    df["inventory_scope"] = (
+        df["inventory_scope"].fillna("general").astype(str).str.strip().replace("", "general")
+    )
+    return df[REGULARIZATION_COLUMNS]
+
+
 @dataclass
 class LocalCsvRepository:
     path: str = str(LOCAL_MOVEMENTS_PATH)
+    regularizations_path: str = str(LOCAL_REGULARIZATIONS_PATH)
 
     def load_movements(self) -> pd.DataFrame:
         LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -127,6 +166,22 @@ class LocalCsvRepository:
     ) -> None:
         return None
 
+    def load_regularizations(self) -> pd.DataFrame:
+        LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if not LOCAL_REGULARIZATIONS_PATH.exists():
+            return pd.DataFrame(columns=REGULARIZATION_COLUMNS)
+        df = pd.read_csv(self.regularizations_path)
+        return _ensure_regularization_columns(df)
+
+    def save_regularization(self, payload: dict[str, object]) -> None:
+        df = self.load_regularizations()
+        payload = payload.copy()
+        payload["regularization_uid"] = str(payload.get("regularization_uid") or uuid4())
+        payload["inventory_scope"] = str(payload.get("inventory_scope") or "general")
+        payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
+        updated = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
+        _ensure_regularization_columns(updated).to_csv(self.regularizations_path, index=False)
+
 
 class SupabaseRepository:
     def __init__(self) -> None:
@@ -152,7 +207,10 @@ class SupabaseRepository:
         payload["movement_uid"] = str(payload.get("movement_uid") or uuid4())
         payload["inventory_scope"] = str(payload.get("inventory_scope") or "recuperacion")
         payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
-        self.client.table("inventory_movements").insert(payload).execute()
+        try:
+            self.client.table("inventory_movements").insert(payload).execute()
+        except Exception:
+            pass
         self.local_backup.save_movement(payload)
 
     def upsert_movements(self, movements_df: pd.DataFrame) -> None:
@@ -160,10 +218,13 @@ class SupabaseRepository:
         payload_df = _sanitize_records_df(payload_df)
         records = payload_df.to_dict(orient="records")
         if records:
-            self.client.table("inventory_movements").upsert(
-                records,
-                on_conflict="movement_uid",
-            ).execute()
+            try:
+                self.client.table("inventory_movements").upsert(
+                    records,
+                    on_conflict="movement_uid",
+                ).execute()
+            except Exception:
+                pass
         self.local_backup.upsert_movements(payload_df)
 
     def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
@@ -228,6 +289,29 @@ class SupabaseRepository:
         self.client.table("inventory_seed_entries").insert(
             payload_df.to_dict(orient="records")
         ).execute()
+
+    def load_regularizations(self) -> pd.DataFrame:
+        try:
+            response = self.client.table("inventory_regularizations").select("*").execute()
+            data = response.data or []
+            if not data:
+                return self.local_backup.load_regularizations()
+            df = pd.DataFrame(data)
+            return _ensure_regularization_columns(df)
+        except Exception:
+            return self.local_backup.load_regularizations()
+
+    def save_regularization(self, payload: dict[str, object]) -> None:
+        payload = payload.copy()
+        payload["regularization_uid"] = str(payload.get("regularization_uid") or uuid4())
+        payload["inventory_scope"] = str(payload.get("inventory_scope") or "general")
+        payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
+        clean_payload = _sanitize_records_df(pd.DataFrame([payload]))[REGULARIZATION_COLUMNS].to_dict(orient="records")[0]
+        try:
+            self.client.table("inventory_regularizations").insert(clean_payload).execute()
+        except Exception:
+            pass
+        self.local_backup.save_regularization(payload)
 
 
 def get_repository():
