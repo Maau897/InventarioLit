@@ -880,6 +880,84 @@ def render_regularization_table(regularizations_df: pd.DataFrame, inventory_scop
     st.dataframe(filtered[order_columns(filtered, REGULARIZATION_DISPLAY_COLUMNS)], use_container_width=True, hide_index=True)
 
 
+def render_catalog_editor(repository, inventory_scope: str) -> None:
+    st.subheader("Editar catalogo")
+    st.caption(
+        "Usa esta pestaña para corregir nombres ambiguos de materiales/reactivos. "
+        "No cambia cantidades ni movimientos; solo actualiza la base oficial."
+    )
+
+    target_scope = st.selectbox(
+        "Base a editar",
+        options=[inventory_scope],
+        format_func=lambda value: INVENTORY_SCOPES.get(value, value),
+        key=f"catalog_editor_scope_{inventory_scope}",
+    )
+
+    seed_df = repository.load_seed_entries(target_scope)
+    if seed_df.empty:
+        st.info("No hay base oficial sembrada para editar.")
+        return
+
+    editable_columns = ["descripcion", "catalogo", "marca", "categoria", "unidad", "ubicacion"]
+    display_columns = [
+        "row_id",
+        "codigo",
+        "catalogo",
+        "descripcion",
+        "marca",
+        "categoria",
+        "unidad",
+        "ubicacion",
+        "cantidad",
+        "lote",
+        "caducidad",
+        "source_label",
+    ]
+    seed_df = seed_df.reset_index(drop=True).copy()
+    seed_df["row_id"] = seed_df.index
+
+    search = st.text_input(
+        "Buscar por codigo, catalogo, descripcion, marca o ubicacion",
+        key=f"catalog_editor_search_{inventory_scope}_{target_scope}",
+    )
+    filtered = seed_df.copy()
+    if search.strip():
+        pattern = search.strip().lower()
+        filtered = filtered.loc[
+            filtered.astype(str)
+            .apply(lambda col: col.str.lower().str.contains(pattern, na=False))
+            .any(axis=1)
+        ].copy()
+
+    st.caption(f"Editando {len(filtered)} de {len(seed_df)} registros de `{target_scope}`.")
+    edited = st.data_editor(
+        filtered[order_columns(filtered, display_columns)],
+        use_container_width=True,
+        hide_index=True,
+        disabled=[column for column in display_columns if column not in editable_columns],
+        key=f"catalog_editor_{inventory_scope}_{target_scope}",
+    )
+
+    if st.button("Guardar cambios de catalogo", key=f"save_catalog_editor_{inventory_scope}_{target_scope}", use_container_width=True):
+        updated_seed = seed_df.copy()
+        edited = edited.copy()
+        for column in editable_columns:
+            if column not in edited.columns:
+                continue
+            values_by_row = edited.set_index("row_id")[column].to_dict()
+            updated_seed[column] = updated_seed["row_id"].map(values_by_row).combine_first(updated_seed[column])
+
+        updated_seed = updated_seed.drop(columns=["row_id"])
+        repository.replace_seed_entries(
+            target_scope,
+            updated_seed,
+            source_label=f"catalogo_editado_{target_scope}",
+        )
+        st.success("Catalogo actualizado.")
+        st.rerun()
+
+
 def render_editable_captured_rows(
     selected_code: str,
     inventory_scope: str,
@@ -1137,7 +1215,7 @@ def load_inventory_bundle(
     prefer_seed: bool = True,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
     if prefer_seed:
-        seed_df = repository.load_seed_entries(inventory_scope)
+        seed_df = repository.load_seed_entries_many(get_scope_filter_values(inventory_scope))
         if not seed_df.empty:
             return load_seed_inventory_frames(seed_df), pd.DataFrame(), pd.DataFrame()
 
@@ -1148,12 +1226,14 @@ def load_inventory_bundle(
             raise RuntimeError("No hay base oficial sembrada y tampoco existe el inventario de recuperacion.")
         indicator_frames = load_indicator_inventory_frames(indicators_workbook_source, "JUL 26")
         recovery_frames = load_recovery_template_frames(recovery_workbook_source)
-        return merge_inventory_frames(indicator_frames, recovery_frames), pd.DataFrame(), pd.DataFrame()
+        frames = [indicator_frames, recovery_frames]
+        if materials_workbook_source is not None:
+            frames.append(load_material_inventory_frames(materials_workbook_source, "federal"))
+            frames.append(load_material_inventory_frames(materials_workbook_source, "avimex"))
+        return merge_inventory_frames(*frames), pd.DataFrame(), pd.DataFrame()
 
     if inventory_scope == "frontera":
-        if materials_workbook_source is None:
-            raise RuntimeError("No hay base oficial sembrada y tampoco existe el archivo local para Frontera/Federal.")
-        return load_material_inventory_frames(materials_workbook_source, "federal"), pd.DataFrame(), pd.DataFrame()
+        return {"entradas": pd.DataFrame(), "salidas": pd.DataFrame(), "catalogo": pd.DataFrame()}, pd.DataFrame(), pd.DataFrame()
 
     raise RuntimeError(f"Inventario no soportado: {inventory_scope}")
 
@@ -1163,7 +1243,7 @@ def explain_load_error(exc: Exception, inventory_scope: str) -> None:
     if inventory_scope == "lit":
         st.info("Verifica que existan el archivo de indicadores y el inventario de recuperacion.")
     else:
-        st.info("Verifica que exista el Excel local de Frontera/Federal.")
+        st.info("Frontera aun no tiene base inicial; empieza capturando entradas cuando sea necesario.")
 
 
 def resolve_workbook_source(local_path: str, uploaded_file=None):
@@ -1189,7 +1269,7 @@ def main() -> None:
         format_func=lambda key: INVENTORY_SCOPES[key],
     )
 
-    seed_available = not repository.load_seed_entries(inventory_scope).empty
+    seed_available = not repository.load_seed_entries_many(get_scope_filter_values(inventory_scope)).empty
     if seed_available:
         st.sidebar.success("Base oficial cargada.")
     else:
@@ -1247,6 +1327,7 @@ def main() -> None:
     if inventory_scope == "lit":
         recovery_workbook_source = resolve_workbook_source(recovery_workbook_path, recovery_upload)
         indicators_workbook_source = resolve_workbook_source(indicators_workbook_path, indicators_upload)
+        materials_workbook_source = resolve_workbook_source(materials_workbook_path, materials_upload)
     else:
         materials_workbook_source = resolve_workbook_source(materials_workbook_path, materials_upload)
 
@@ -1276,7 +1357,7 @@ def main() -> None:
             ignore_index=True,
         )
 
-    scope_movements = app_movements.loc[app_movements["inventory_scope"] == inventory_scope].copy()
+    scope_movements = app_movements.loc[app_movements["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
     inventory_df, entry_df, exit_df, catalog_df = build_inventory_snapshot(
         frames["entradas"],
         frames["salidas"],
@@ -1307,12 +1388,13 @@ def main() -> None:
     kpi3.metric("Entradas acumuladas", f"{total_entries:,.0f}")
     kpi4.metric("Salidas acumuladas", f"{total_exits:,.0f}")
 
-    resumen_tab, negativos_tab, corregir_negativos_tab, buscador_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, regularizaciones_tab = st.tabs(
+    resumen_tab, negativos_tab, corregir_negativos_tab, buscador_tab, editar_catalogo_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, regularizaciones_tab = st.tabs(
         [
             "Resumen general",
             "Negativos por revisar",
             "Corregir negativos",
             "Buscador catalogo",
+            "Editar catalogo",
             "Recepcion",
             "Salidas",
             "Registrar entrada",
@@ -1385,6 +1467,9 @@ def main() -> None:
 
     with buscador_tab:
         render_catalog_search(general_inventory_df, app_movements, repository, inventory_scope)
+
+    with editar_catalogo_tab:
+        render_catalog_editor(repository, inventory_scope)
 
     with recepcion_tab:
         recepcion_df = entry_df.sort_values("fecha", ascending=False, na_position="last").copy()

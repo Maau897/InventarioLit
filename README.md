@@ -4,11 +4,11 @@ App en Streamlit para operar el inventario LIT y el listado Frontera.
 
 ## Fuentes actuales
 
-- `LIT`: usa el conteo real de la hoja `JUL 26` del archivo de indicadores de almacenes.
-- `LIT`: usa el inventario de recuperacion solo como plantilla/catalogo; no suma existencia.
-- `Frontera`: usa el listado federal/local como fuente separada.
+- `LIT`: usa la base oficial integrada sembrada en `inventory_seed_entries`; ahi se junta LIT, federal y avimex.
+- `Frontera`: queda vacio por ahora y se usara para capturas nuevas cuando se implemente ese flujo.
+- Los Excel quedan solo como respaldo para reconstruir la base oficial.
 
-Los archivos Excel no se suben al repositorio. En local se pueden leer desde la carpeta del proyecto; en Streamlit Cloud se cargan desde la barra lateral.
+Los archivos Excel no se suben al repositorio. En Streamlit Cloud la app debe leer la base oficial desde Supabase.
 
 ## Ejecutar local
 
@@ -21,8 +21,26 @@ streamlit run app.py
 
 1. Sube solo el codigo a GitHub.
 2. No subas inventarios, formatos, credenciales ni respaldos locales.
-3. Configura secrets en Streamlit Cloud si se usara Supabase.
-4. En la app desplegada, sube los Excel desde la barra lateral cuando la app los pida.
+3. Corre `supabase/inventory_schema.sql` en Supabase.
+4. Sube la base oficial a Supabase con el script de semilla.
+5. Configura secrets en Streamlit Cloud.
+
+Para sembrar `LIT` integrado y dejar `Frontera` vacio:
+
+```powershell
+$env:SUPABASE_URL="https://tu-proyecto.supabase.co"
+$env:SUPABASE_KEY="tu-service-role-key"
+python scripts\build_official_inventory_seed.py --all
+```
+
+En la app, al seleccionar `LIT`, se carga solo el scope `lit`, pero ese scope ya contiene LIT, federal y avimex. Al seleccionar `Frontera`, se muestra un inventario vacio listo para capturas futuras.
+
+Para sembrar solo una:
+
+```powershell
+python scripts\build_official_inventory_seed.py --lit
+python scripts\build_official_inventory_seed.py --frontera
+```
 
 ## Archivos excluidos
 
@@ -47,3 +65,7 @@ Si se activa persistencia remota, configura en secrets:
 supabase_url = "..."
 supabase_key = "..."
 ```
+
+La app primero intenta leer `inventory_seed_entries`. Si no hay registros para el inventario activo, muestra la opcion de reconstruir desde Excel como respaldo.
+
+La pestaña `Editar catalogo` permite corregir nombres ambiguos, marca, catalogo, categoria, unidad y ubicacion sin modificar cantidades.

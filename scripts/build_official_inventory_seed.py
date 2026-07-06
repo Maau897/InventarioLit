@@ -51,17 +51,18 @@ def _snapshot_to_seed(frames: dict[str, pd.DataFrame], source_label: str) -> pd.
     return seed_df[SEED_EXPORT_COLUMNS + ["source_label"]].copy()
 
 
-def build_lit_seed(indicators_path: Path, recovery_path: Path) -> pd.DataFrame:
+def build_lit_seed(indicators_path: Path, recovery_path: Path, materials_path: Path) -> pd.DataFrame:
     frames = merge_inventory_frames(
         load_indicator_inventory_frames(indicators_path, "JUL 26"),
         load_recovery_template_frames(recovery_path),
+        load_material_inventory_frames(materials_path, "federal"),
+        load_material_inventory_frames(materials_path, "avimex"),
     )
-    return _snapshot_to_seed(frames, "base_oficial_lit_jul_2026")
+    return _snapshot_to_seed(frames, "base_oficial_lit_integrada")
 
 
-def build_frontera_seed(materials_path: Path) -> pd.DataFrame:
-    frames = load_material_inventory_frames(materials_path, "federal")
-    return _snapshot_to_seed(frames, "base_oficial_frontera")
+def build_empty_frontera_seed() -> pd.DataFrame:
+    return pd.DataFrame(columns=SEED_EXPORT_COLUMNS + ["source_label"])
 
 
 def _print_summary(scope: str, seed_df: pd.DataFrame) -> None:
@@ -87,13 +88,13 @@ def main() -> None:
     repository = LocalCsvRepository() if args.local_only else get_repository()
 
     if build_lit:
-        lit_seed = build_lit_seed(Path(args.indicators_path), Path(args.recovery_path))
-        repository.replace_seed_entries("lit", lit_seed, source_label="base_oficial_lit_jul_2026")
+        lit_seed = build_lit_seed(Path(args.indicators_path), Path(args.recovery_path), Path(args.materials_path))
+        repository.replace_seed_entries("lit", lit_seed, source_label="base_oficial_lit_integrada")
         _print_summary("LIT", lit_seed)
 
     if build_frontera:
-        frontera_seed = build_frontera_seed(Path(args.materials_path))
-        repository.replace_seed_entries("frontera", frontera_seed, source_label="base_oficial_frontera")
+        frontera_seed = build_empty_frontera_seed()
+        repository.replace_seed_entries("frontera", frontera_seed, source_label="frontera_pendiente")
         _print_summary("Frontera", frontera_seed)
 
 

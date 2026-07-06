@@ -502,6 +502,9 @@ def _catalog_from_movements(entry_df: pd.DataFrame, exit_df: pd.DataFrame) -> pd
         return pd.DataFrame(
             columns=[
                 ITEM_KEY_COLUMN,
+                RAW_ITEM_KEY_COLUMN,
+                CANONICAL_CATALOG_COLUMN,
+                CANONICAL_DESCRIPTION_COLUMN,
                 "codigo",
                 "codigo_local",
                 "descripcion",
