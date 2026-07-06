@@ -640,11 +640,16 @@ def render_movement_form(
     st.subheader(title)
     st.caption("Este movimiento se guarda en la app y se suma al inventario del scope activo.")
 
+    reset_state_key = f"movement_form_reset_{inventory_scope}_{movement_type}"
+    if reset_state_key not in st.session_state:
+        st.session_state[reset_state_key] = 0
+    reset_nonce = st.session_state[reset_state_key]
+
     if movement_type == "salida":
         search_catalog = st.text_input(
             "Buscar por catalogo",
-            key=f"search_catalog_{inventory_scope}_{movement_type}",
-        help="Busca por catalogo, descripcion o marca.",
+            key=f"search_catalog_{inventory_scope}_{movement_type}_{reset_nonce}",
+            help="Busca por catalogo, descripcion o marca.",
         )
         filtered_catalog = catalog_df.copy()
         if search_catalog.strip():
@@ -662,11 +667,11 @@ def render_movement_form(
     selected_label = st.selectbox(
         "Selecciona un insumo",
         options=build_catalog_options(option_source),
-        key=f"selector_{inventory_scope}_{movement_type}",
+        key=f"selector_{inventory_scope}_{movement_type}_{reset_nonce}",
     )
     defaults = prefill_values(selected_label, catalog_df)
 
-    with st.form(f"form_{inventory_scope}_{movement_type}", clear_on_submit=False):
+    with st.form(f"form_{inventory_scope}_{movement_type}_{reset_nonce}", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         with col1:
             id_registro = st.text_input(
@@ -746,6 +751,7 @@ def render_movement_form(
                     }
                 )
                 st.success("Movimiento guardado correctamente.")
+                st.session_state[reset_state_key] = reset_nonce + 1
                 st.rerun()
 
 
