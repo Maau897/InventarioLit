@@ -892,11 +892,11 @@ def render_regularization_table(regularizations_df: pd.DataFrame, inventory_scop
     )
 
 
-def render_catalog_editor(repository, inventory_scope: str) -> None:
+def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.DataFrame) -> None:
     st.subheader("Editar catalogo")
     st.caption(
         "Usa esta pestaña para corregir nombres ambiguos de materiales/reactivos. "
-        "No cambia cantidades ni movimientos; solo actualiza la base oficial."
+        "Si hay base oficial, actualiza la semilla; si no hay semilla, actualiza los movimientos capturados."
     )
 
     target_scope = st.selectbox(
@@ -907,9 +907,19 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
     )
 
     seed_df = repository.load_seed_entries(target_scope)
-    if seed_df.empty:
-        st.info("No hay base oficial sembrada para editar.")
-        return
+    editing_movements = seed_df.empty
+    if editing_movements:
+        source_df = filter_app_scope_rows(app_movements, target_scope)
+        if source_df.empty:
+            st.info("Todavia no hay base oficial ni movimientos capturados para editar.")
+            return
+        source_df = source_df.copy()
+        source_df["row_id"] = source_df["movement_uid"]
+        st.info("Frontera aun no tiene base oficial. Se editaran los movimientos capturados.")
+    else:
+        source_df = seed_df.copy()
+        source_df = source_df.reset_index(drop=True)
+        source_df["row_id"] = source_df.index
 
     editable_columns = ["descripcion", "catalogo", "marca", "categoria", "unidad", "ubicacion"]
     display_columns = [
@@ -925,14 +935,11 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
         "caducidad",
         "source_label",
     ]
-    seed_df = seed_df.reset_index(drop=True).copy()
-    seed_df["row_id"] = seed_df.index
-
     search = st.text_input(
         "Buscar por catalogo, descripcion, marca o ubicacion",
         key=f"catalog_editor_search_{inventory_scope}_{target_scope}",
     )
-    filtered = seed_df.copy()
+    filtered = source_df.copy()
     if search.strip():
         pattern = search.strip().lower()
         filtered = filtered.loc[
@@ -941,7 +948,7 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
             .any(axis=1)
         ].copy()
 
-    st.caption(f"Editando {len(filtered)} de {len(seed_df)} registros de `{target_scope}`.")
+    st.caption(f"Editando {len(filtered)} de {len(source_df)} registros de `{target_scope}`.")
     edited = st.data_editor(
         filtered[order_columns(filtered, display_columns)],
         use_container_width=True,
@@ -951,20 +958,32 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
     )
 
     if st.button("Guardar cambios de catalogo", key=f"save_catalog_editor_{inventory_scope}_{target_scope}", use_container_width=True):
-        updated_seed = seed_df.copy()
+        updated_source = source_df.copy()
         edited = edited.copy()
         for column in editable_columns:
             if column not in edited.columns:
                 continue
             values_by_row = edited.set_index("row_id")[column].to_dict()
-            updated_seed[column] = updated_seed["row_id"].map(values_by_row).combine_first(updated_seed[column])
+            updated_source[column] = updated_source["row_id"].map(values_by_row).combine_first(updated_source[column])
 
-        updated_seed = updated_seed.drop(columns=["row_id"])
-        repository.replace_seed_entries(
-            target_scope,
-            updated_seed,
-            source_label=f"catalogo_editado_{target_scope}",
-        )
+        if editing_movements:
+            updated_movements = updated_source.drop(columns=["row_id"])
+            updated_movements["codigo"] = updated_movements.apply(
+                lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
+                axis=1,
+            )
+            repository.upsert_movements(updated_movements[MOVEMENT_COLUMNS])
+        else:
+            updated_seed = updated_source.drop(columns=["row_id"])
+            updated_seed["codigo"] = updated_seed.apply(
+                lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
+                axis=1,
+            )
+            repository.replace_seed_entries(
+                target_scope,
+                updated_seed,
+                source_label=f"catalogo_editado_{target_scope}",
+            )
         st.success("Catalogo actualizado.")
         st.rerun()
 
@@ -1286,8 +1305,12 @@ def main() -> None:
     )
 
     seed_available = not repository.load_seed_entries_many(get_scope_filter_values(inventory_scope)).empty
+    app_movements = repository.load_movements()
+    has_captured_movements = not filter_app_scope_rows(app_movements, inventory_scope).empty
     if seed_available:
         st.sidebar.success("Base oficial cargada.")
+    elif has_captured_movements:
+        st.sidebar.success("Movimientos capturados cargados.")
     else:
         st.sidebar.warning("No hay base oficial sembrada; se usaran Excel como respaldo.")
 
@@ -1360,7 +1383,6 @@ def main() -> None:
         explain_load_error(exc, inventory_scope)
         return
 
-    app_movements = repository.load_movements()
     regularizations_df = repository.load_regularizations()
     apply_regularizations = st.sidebar.checkbox(
         "Aplicar regularizaciones al inventario actual",
@@ -1388,6 +1410,8 @@ def main() -> None:
     using_seed = seed_available and not use_excel_fallback
     if using_seed:
         st.caption("Fuente: base oficial sembrada. Los Excel ya no son necesarios para operar.")
+    elif has_captured_movements:
+        st.caption("Fuente: movimientos capturados. Este inventario todavia no tiene base oficial sembrada.")
     elif inventory_scope == "lit":
         st.caption("Fuente: base oficial LIT. Si no existe semilla, se reconstruye con JUL 26 + plantilla de recuperacion.")
     else:
@@ -1485,7 +1509,7 @@ def main() -> None:
         render_catalog_search(general_inventory_df, app_movements, repository, inventory_scope)
 
     with editar_catalogo_tab:
-        render_catalog_editor(repository, inventory_scope)
+        render_catalog_editor(repository, inventory_scope, app_movements)
 
     with recepcion_tab:
         recepcion_df = entry_df.sort_values("fecha", ascending=False, na_position="last").copy()
