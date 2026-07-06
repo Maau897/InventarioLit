@@ -44,7 +44,6 @@ st.set_page_config(page_title="Inventario General INER", layout="wide")
 
 ENTRY_COLUMNS = [
     "id_registro",
-    "codigo",
     "descripcion",
     "catalogo",
     "marca",
@@ -62,7 +61,7 @@ ENTRY_COLUMNS = [
 ]
 
 SUMMARY_COLUMNS = [
-    "codigo",
+    "catalogo",
     "descripcion",
     "marca",
     "categoria",
@@ -108,10 +107,9 @@ NEGATIVE_DIAGNOSTIC_COLUMNS = [
 
 TABLE_COLUMNS = [
     "id_registro",
-    "codigo",
+    "catalogo",
     "descripcion",
     "marca",
-    "catalogo",
     "lote",
     "caducidad",
     "cantidad",
@@ -123,9 +121,8 @@ TABLE_COLUMNS = [
 EDITABLE_MOVEMENT_COLUMNS = [
     "movement_uid",
     "id_registro",
-    "codigo",
-    "descripcion",
     "catalogo",
+    "descripcion",
     "marca",
     "lote",
     "cantidad",
@@ -142,9 +139,8 @@ EDITABLE_MOVEMENT_COLUMNS = [
 
 NEGATIVE_REVIEW_COLUMNS = [
     "id_registro",
-    "codigo",
-    "descripcion",
     "catalogo",
+    "descripcion",
     "marca",
     "lote",
     "cantidad",
@@ -172,7 +168,6 @@ REGULARIZATION_DISPLAY_COLUMNS = [
     "tipo_regularizacion",
     "fecha_corte",
     "fecha_validacion",
-    "codigo",
     "catalogo",
     "descripcion",
     "marca",
@@ -189,6 +184,11 @@ REGULARIZATION_DISPLAY_COLUMNS = [
     "inventory_scope",
 ]
 
+HIDDEN_DISPLAY_COLUMNS = [
+    "codigo",
+    "codigo_local",
+]
+
 
 def init_state() -> None:
     if "selected_code" not in st.session_state:
@@ -197,6 +197,13 @@ def init_state() -> None:
 
 def get_item_key(row: pd.Series) -> str:
     return str(row.get(ITEM_KEY_COLUMN, "") or row.get("catalogo", "") or row.get("codigo", "")).strip()
+
+
+def technical_code(catalogo: object, descripcion: object = "") -> str:
+    value = str(catalogo or "").strip()
+    if value:
+        return value
+    return str(descripcion or "").strip() or "SIN CATALOGO"
 
 
 def filter_by_item_key(df: pd.DataFrame, item_key: str) -> pd.DataFrame:
@@ -416,6 +423,7 @@ def render_full_table(title: str, df: pd.DataFrame, search_key: str) -> None:
         st.info("No hay datos disponibles en esta tabla.")
         return
 
+    df = df.drop(columns=[column for column in HIDDEN_DISPLAY_COLUMNS if column in df.columns])
     search = st.text_input(f"Buscar en {title.lower()}", key=search_key)
     filtered = df.copy()
     if search:
@@ -437,6 +445,10 @@ def order_columns(df: pd.DataFrame, preferred: list[str]) -> list[str]:
 def rename_display_columns(df: pd.DataFrame, rename_map: dict[str, str]) -> pd.DataFrame:
     available = {key: value for key, value in rename_map.items() if key in df.columns}
     return df.rename(columns=available)
+
+
+def hide_display_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=[column for column in HIDDEN_DISPLAY_COLUMNS if column in df.columns])
 
 
 def apply_canonical_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -501,10 +513,9 @@ def save_conflict_flag(payload: dict[str, object]) -> None:
 def render_negative_item_card(row: pd.Series) -> None:
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown(f"**Codigo:** {row.get('codigo', '')}")
+        st.markdown(f"**Catalogo:** {row.get('catalogo', '')}")
         st.markdown(f"**Descripcion:** {row.get('descripcion', '')}")
         st.markdown(f"**Marca:** {row.get('marca', '')}")
-        st.markdown(f"**Catalogo:** {row.get('catalogo', '')}")
     with col2:
         st.markdown(f"**Categoria:** {row.get('categoria', '')}")
         st.markdown(f"**Ubicacion:** {row.get('ubicacion', '')}")
@@ -522,9 +533,8 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
         form_col1, form_col2, form_col3 = st.columns(3)
         with form_col1:
             id_registro = st.text_input("ID de entrada", value="")
-            codigo = st.text_input("Codigo", value=str(row.get("codigo", "")))
-            descripcion = st.text_input("Descripcion", value=str(row.get("descripcion", "")))
             catalogo = st.text_input("Catalogo", value=str(row.get("catalogo", "")))
+            descripcion = st.text_input("Descripcion", value=str(row.get("descripcion", "")))
             marca = st.text_input("Marca", value=str(row.get("marca", "")))
         with form_col2:
             lote = st.text_input("Lote", value=str(row.get("lote", "")))
@@ -541,8 +551,6 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
         submitted = st.form_submit_button("Guardar entrada faltante", use_container_width=True)
         if submitted:
             errors = []
-            if not codigo.strip():
-                errors.append("El codigo es obligatorio.")
             if not descripcion.strip():
                 errors.append("La descripcion es obligatoria.")
             if cantidad <= 0:
@@ -560,7 +568,7 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
                         "inventory_scope": inventory_scope,
                         "movement_type": "entrada",
                         "id_registro": id_registro.strip(),
-                        "codigo": codigo.strip(),
+                        "codigo": technical_code(catalogo, descripcion),
                         "descripcion": descripcion.strip(),
                         "catalogo": catalogo.strip(),
                         "marca": marca.strip(),
@@ -636,13 +644,13 @@ def render_movement_form(
         search_catalog = st.text_input(
             "Buscar por catalogo",
             key=f"search_catalog_{inventory_scope}_{movement_type}",
-            help="Busca por codigo, catalogo, descripcion o marca.",
+        help="Busca por catalogo, descripcion o marca.",
         )
         filtered_catalog = catalog_df.copy()
         if search_catalog.strip():
             pattern = search_catalog.strip().lower()
             filtered_catalog = filtered_catalog.loc[
-                filtered_catalog[["codigo", "catalogo", "descripcion", "marca"]]
+                filtered_catalog[["catalogo", "descripcion", "marca"]]
                 .astype(str)
                 .apply(lambda col: col.str.lower().str.contains(pattern, na=False))
                 .any(axis=1)
@@ -665,9 +673,8 @@ def render_movement_form(
                 "ID de entrada" if movement_type == "entrada" else "ID de salida",
                 value=str(defaults["id_registro"]),
             )
-            codigo = st.text_input("Codigo", value=str(defaults["codigo"]))
-            descripcion = st.text_input("Descripcion", value=str(defaults["descripcion"]))
             catalogo = st.text_input("Catalogo", value=str(defaults["catalogo"]))
+            descripcion = st.text_input("Descripcion", value=str(defaults["descripcion"]))
             marca = st.text_input("Marca", value=str(defaults["marca"]))
         with col2:
             lote = st.text_input("Lote", value=str(defaults["lote"]))
@@ -703,8 +710,6 @@ def render_movement_form(
         submitted = st.form_submit_button("Guardar movimiento", use_container_width=True)
         if submitted:
             errors = []
-            if not codigo.strip():
-                errors.append("El codigo es obligatorio.")
             if not descripcion.strip():
                 errors.append("La descripcion es obligatoria.")
             if cantidad <= 0:
@@ -723,7 +728,7 @@ def render_movement_form(
                         "inventory_scope": inventory_scope,
                         "movement_type": movement_type,
                         "id_registro": id_registro.strip(),
-                        "codigo": codigo.strip(),
+                        "codigo": technical_code(catalogo, descripcion),
                         "descripcion": descripcion.strip(),
                         "catalogo": catalogo.strip(),
                         "marca": marca.strip(),
@@ -789,9 +794,8 @@ def render_regularization_form(catalog_df: pd.DataFrame, repository, inventory_s
     with st.form(f"form_{inventory_scope}_regularizacion", clear_on_submit=False):
         col1, col2, col3 = st.columns(3)
         with col1:
-            codigo = st.text_input("Codigo", value=str(defaults["codigo"]))
-            descripcion = st.text_input("Descripcion", value=str(defaults["descripcion"]))
             catalogo = st.text_input("Catalogo", value=str(defaults["catalogo"]))
+            descripcion = st.text_input("Descripcion", value=str(defaults["descripcion"]))
             marca = st.text_input("Marca", value=str(defaults["marca"]))
             tipo_regularizacion = st.selectbox(
                 "Tipo de regularizacion",
@@ -827,8 +831,6 @@ def render_regularization_form(catalog_df: pd.DataFrame, repository, inventory_s
         submitted = st.form_submit_button("Guardar regularizacion", use_container_width=True)
         if submitted:
             errors = []
-            if not codigo.strip():
-                errors.append("El codigo es obligatorio.")
             if not descripcion.strip():
                 errors.append("La descripcion es obligatoria.")
             if cantidad <= 0:
@@ -847,7 +849,7 @@ def render_regularization_form(catalog_df: pd.DataFrame, repository, inventory_s
                         "tipo_regularizacion": tipo_regularizacion,
                         "fecha_corte": parse_single_datetime(fecha_corte).strftime("%Y-%m-%d"),
                         "fecha_validacion": parse_single_datetime(fecha_validacion).strftime("%Y-%m-%d"),
-                        "codigo": codigo.strip(),
+                        "codigo": technical_code(catalogo, descripcion),
                         "descripcion": descripcion.strip(),
                         "catalogo": catalogo.strip(),
                         "marca": marca.strip(),
@@ -877,7 +879,11 @@ def render_regularization_table(regularizations_df: pd.DataFrame, inventory_scop
     if filtered.empty:
         st.info("No hay regularizaciones para este scope.")
         return
-    st.dataframe(filtered[order_columns(filtered, REGULARIZATION_DISPLAY_COLUMNS)], use_container_width=True, hide_index=True)
+    st.dataframe(
+        hide_display_columns(filtered[order_columns(filtered, REGULARIZATION_DISPLAY_COLUMNS)]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def render_catalog_editor(repository, inventory_scope: str) -> None:
@@ -902,7 +908,6 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
     editable_columns = ["descripcion", "catalogo", "marca", "categoria", "unidad", "ubicacion"]
     display_columns = [
         "row_id",
-        "codigo",
         "catalogo",
         "descripcion",
         "marca",
@@ -918,7 +923,7 @@ def render_catalog_editor(repository, inventory_scope: str) -> None:
     seed_df["row_id"] = seed_df.index
 
     search = st.text_input(
-        "Buscar por codigo, catalogo, descripcion, marca o ubicacion",
+        "Buscar por catalogo, descripcion, marca o ubicacion",
         key=f"catalog_editor_search_{inventory_scope}_{target_scope}",
     )
     filtered = seed_df.copy()
@@ -994,6 +999,14 @@ def render_editable_captured_rows(
             updated["captured_at"] = updated["movement_uid"].map(
                 subset.set_index("movement_uid")["captured_at"].to_dict()
             )
+            updated["codigo"] = updated["movement_uid"].map(
+                subset.set_index("movement_uid")["codigo"].to_dict()
+            )
+            missing_code = updated["codigo"].fillna("").astype(str).str.strip() == ""
+            updated.loc[missing_code, "codigo"] = updated.loc[missing_code].apply(
+                lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
+                axis=1,
+            )
             updated["fecha"] = parse_mixed_datetime_series(updated["fecha"]).dt.strftime("%Y-%m-%d")
             updated["cantidad"] = pd.to_numeric(updated["cantidad"], errors="coerce").fillna(0)
             repository.upsert_movements(updated[MOVEMENT_COLUMNS])
@@ -1009,7 +1022,7 @@ def render_catalog_search(
 ) -> None:
     st.subheader("Buscador por catalogo")
     st.caption(
-        "Busca por catalogo, codigo, descripcion o marca. Desde aqui puedes localizar el activo y editar movimientos capturados para corregir negativos."
+        "Busca por catalogo, descripcion o marca. Desde aqui puedes localizar el activo y editar movimientos capturados para corregir negativos."
     )
     search = st.text_input("Buscar activo", key=f"catalog_search_{inventory_scope}")
     if not search:
@@ -1036,7 +1049,6 @@ def render_catalog_search(
     card_left, card_right = st.columns([2, 1])
     with card_left:
         st.markdown("### Ficha del activo")
-        st.markdown(f"**Codigo:** {row['codigo']}")
         st.markdown(f"**Catalogo:** {row['catalogo']}")
         st.markdown(f"**Descripcion:** {row['descripcion']}")
         st.markdown(f"**Marca:** {row['marca']}")
@@ -1069,8 +1081,8 @@ def render_negative_correction_tab(
         st.success("No hay claves negativas para corregir.")
         return
 
-    st.caption("Busca por codigo o descripcion y revisa entradas, salidas y movimientos capturados antes de corregir.")
-    search = st.text_input("Buscar por codigo", key=f"negative_fix_search_{inventory_scope}")
+    st.caption("Busca por catalogo o descripcion y revisa entradas, salidas y movimientos capturados antes de corregir.")
+    search = st.text_input("Buscar por catalogo", key=f"negative_fix_search_{inventory_scope}")
     filtered_negatives = diagnostics_df.copy()
     if search.strip():
         pattern = search.strip().lower()
@@ -1119,7 +1131,7 @@ def render_negative_correction_tab(
 
     with tab_entries:
         if source_entries.empty:
-            st.info("No hay entradas fuente para este codigo.")
+            st.info("No hay entradas fuente para este catalogo.")
         else:
             render_full_table(
                 "Entradas fuente",
@@ -1128,7 +1140,6 @@ def render_negative_correction_tab(
                         source_entries,
                         [
                             "id_registro",
-                            "codigo",
                             "catalogo",
                             "catalogo_original",
                             "descripcion",
@@ -1150,7 +1161,7 @@ def render_negative_correction_tab(
 
     with tab_exits:
         if source_exits.empty:
-            st.info("No hay salidas fuente para este codigo.")
+            st.info("No hay salidas fuente para este catalogo.")
         else:
             render_full_table(
                 "Salidas fuente",
@@ -1159,7 +1170,6 @@ def render_negative_correction_tab(
                         source_exits,
                         [
                             "id_registro",
-                            "codigo",
                             "catalogo",
                             "catalogo_original",
                             "descripcion",
@@ -1181,14 +1191,14 @@ def render_negative_correction_tab(
 
     with tab_app:
         if app_rows.empty:
-            st.info("No hay movimientos capturados en app para este codigo.")
+            st.info("No hay movimientos capturados en app para este catalogo.")
         else:
             render_full_table(
                 "Movimientos capturados en app",
                 app_rows[
                     order_columns(
                         app_rows,
-                        ["movement_type", "id_registro", "codigo", "descripcion", "catalogo", "marca", "lote", "cantidad", "unidad", "caducidad", "ubicacion", "categoria", "fecha", "responsable", "temperatura", "observaciones", "verificado_por", "inventory_scope"],
+                        ["movement_type", "id_registro", "catalogo", "descripcion", "marca", "lote", "cantidad", "unidad", "caducidad", "ubicacion", "categoria", "fecha", "responsable", "temperatura", "observaciones", "verificado_por", "inventory_scope"],
                     )
                 ],
                 f"search_negative_app_{inventory_scope}_{selected_code}",
@@ -1421,7 +1431,7 @@ def main() -> None:
             key=f"cat_filter_{inventory_scope}",
         )
         search = st.text_input(
-            "Buscar por codigo, descripcion, marca o ubicacion",
+            "Buscar por catalogo, descripcion, marca o ubicacion",
             key=f"search_inventario_{inventory_scope}",
         )
         filtered = general_inventory_df.copy() if show_template_rows else active_inventory_df.copy()
@@ -1436,7 +1446,7 @@ def main() -> None:
             ]
         visible_columns = [column for column in SUMMARY_COLUMNS if column in filtered.columns]
         st.dataframe(
-            filtered[order_columns(filtered, visible_columns)],
+            hide_display_columns(filtered[order_columns(filtered, visible_columns)]),
             use_container_width=True,
             hide_index=True,
         )
@@ -1450,7 +1460,7 @@ def main() -> None:
             st.caption("Esta tabla ya intenta marcar cuando el negativo podria venir de variantes de escritura, entradas faltantes o mezcla de claves para la misma descripcion.")
             visible_columns = [column for column in NEGATIVE_DIAGNOSTIC_COLUMNS if column in negativos_df.columns]
             st.dataframe(
-                negativos_df[order_columns(negativos_df, visible_columns)].sort_values("existencia"),
+                hide_display_columns(negativos_df[order_columns(negativos_df, visible_columns)].sort_values("existencia")),
                 use_container_width=True,
                 hide_index=True,
             )

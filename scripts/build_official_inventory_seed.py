@@ -46,6 +46,10 @@ def _snapshot_to_seed(frames: dict[str, pd.DataFrame], source_label: str) -> pd.
     )
     seed_df = inventory_df.copy()
     seed_df["cantidad"] = seed_df["existencia"].fillna(0).clip(lower=0)
+    seed_df["codigo"] = seed_df["catalogo"].fillna("").astype(str).str.strip()
+    missing_code = seed_df["codigo"] == ""
+    seed_df.loc[missing_code, "codigo"] = seed_df.loc[missing_code, "descripcion"].fillna("").astype(str).str.strip()
+    seed_df["codigo"] = seed_df["codigo"].replace("", "SIN CATALOGO")
     seed_df["source_label"] = source_label
     seed_df = seed_df.sort_values(["categoria", "descripcion", "catalogo", "codigo"])
     return seed_df[SEED_EXPORT_COLUMNS + ["source_label"]].copy()
