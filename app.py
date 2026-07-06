@@ -417,6 +417,42 @@ def prefill_values(selected_label: str, catalog_df: pd.DataFrame) -> dict[str, o
     return defaults
 
 
+def prefill_values_from_catalog(catalog_text: str, catalog_df: pd.DataFrame) -> tuple[dict[str, object], int]:
+    defaults = {column: "" for column in ENTRY_COLUMNS}
+    defaults["cantidad"] = 1
+    defaults["fecha"] = pd.Timestamp.today().date()
+    defaults["categoria"] = "REACTIVO"
+    if catalog_df.empty or not catalog_text.strip():
+        return defaults, 0
+
+    prepared = ensure_item_key(catalog_df)
+    target = normalize_match_key(catalog_text)
+    matches = prepared.loc[
+        (prepared["catalogo"].map(normalize_match_key) == target)
+        | (prepared[CANONICAL_CATALOG_COLUMN].map(normalize_match_key) == target)
+        | (prepared[ITEM_KEY_COLUMN].map(normalize_match_key) == target)
+    ].copy()
+    if matches.empty:
+        return defaults, 0
+
+    row = matches.iloc[0]
+    defaults.update(
+        {
+            "id_registro": row.get("id_registro", ""),
+            "codigo": row.get("codigo", ""),
+            "descripcion": row.get("descripcion", ""),
+            "catalogo": row.get("catalogo", ""),
+            "marca": row.get("marca", ""),
+            "lote": row.get("lote", ""),
+            "unidad": row.get("unidad", ""),
+            "caducidad": row.get("caducidad", ""),
+            "ubicacion": row.get("ubicacion", ""),
+            "categoria": row.get("categoria", "OTRO"),
+        }
+    )
+    return defaults, len(matches)
+
+
 def render_full_table(title: str, df: pd.DataFrame, search_key: str) -> None:
     st.subheader(title)
     if df.empty:
@@ -645,6 +681,20 @@ def render_movement_form(
         st.session_state[reset_state_key] = 0
     reset_nonce = st.session_state[reset_state_key]
 
+    quick_catalog = st.text_input(
+        "Teclea catalogo para autollenar",
+        key=f"quick_catalog_{inventory_scope}_{movement_type}_{reset_nonce}",
+        help="Si el catalogo ya existe, la app rellena descripcion, marca, categoria, unidad y ubicacion.",
+    )
+    quick_defaults, quick_match_count = prefill_values_from_catalog(quick_catalog, catalog_df)
+    if quick_catalog.strip():
+        if quick_match_count == 1:
+            st.success("Catalogo encontrado. Datos autollenados.")
+        elif quick_match_count > 1:
+            st.info("Hay varias coincidencias para ese catalogo. Se uso la primera; revisa los datos antes de guardar.")
+        else:
+            st.warning("No encontre ese catalogo. Puedes capturarlo como nuevo insumo.")
+
     if movement_type == "salida":
         search_catalog = st.text_input(
             "Buscar por catalogo",
@@ -669,9 +719,12 @@ def render_movement_form(
         options=build_catalog_options(option_source),
         key=f"selector_{inventory_scope}_{movement_type}_{reset_nonce}",
     )
-    defaults = prefill_values(selected_label, catalog_df)
+    defaults = quick_defaults if quick_catalog.strip() and quick_match_count > 0 else prefill_values(selected_label, catalog_df)
+    if quick_catalog.strip() and quick_match_count == 0:
+        defaults["catalogo"] = quick_catalog.strip()
 
-    with st.form(f"form_{inventory_scope}_{movement_type}_{reset_nonce}", clear_on_submit=True):
+    default_signature = normalize_match_key(str(defaults.get("catalogo", "")) + str(defaults.get("descripcion", "")))
+    with st.form(f"form_{inventory_scope}_{movement_type}_{reset_nonce}_{default_signature}", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         with col1:
             id_registro = st.text_input(
