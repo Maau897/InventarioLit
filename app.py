@@ -6,10 +6,9 @@ import streamlit as st
 
 from inventory_app.config import (
     DEFAULT_SCOPE,
-    INDICATORS_WORKBOOK_PATH,
     INVENTORY_SCOPES,
+    LIT_OFFICIAL_WORKBOOK_PATH,
     MATERIALS_WORKBOOK_PATH,
-    RECOVERY_WORKBOOK_PATH,
     SHEET_NAME_DEFAULTS,
 )
 from inventory_app.excel_loader import (
@@ -21,17 +20,10 @@ from inventory_app.excel_loader import (
     build_catalog_options,
     build_inventory_snapshot,
     build_product_search_links,
-    clean_count_results_sheet,
-    clean_registry_sheet,
-    combine_catalogs,
     ensure_item_key,
-    enrich_inventory_with_counts,
     harmonize_transaction_keys,
-    load_indicator_inventory_frames,
-    load_material_inventory_frames,
-    load_recovery_template_frames,
+    load_lit_official_inventory_frames,
     load_seed_inventory_frames,
-    merge_inventory_frames,
     normalize_match_key,
     parse_mixed_datetime_series,
     parse_single_datetime,
@@ -1299,6 +1291,7 @@ def load_inventory_bundle(
     recovery_workbook_source,
     indicators_workbook_source,
     materials_workbook_source,
+    lit_workbook_source,
     repository,
     prefer_seed: bool = True,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
@@ -1308,17 +1301,9 @@ def load_inventory_bundle(
             return load_seed_inventory_frames(seed_df), pd.DataFrame(), pd.DataFrame()
 
     if inventory_scope == "lit":
-        if indicators_workbook_source is None:
-            raise RuntimeError("No hay base oficial sembrada y tampoco existe el archivo de indicadores de desempeño de los almacenes.")
-        if recovery_workbook_source is None:
-            raise RuntimeError("No hay base oficial sembrada y tampoco existe el inventario de recuperacion.")
-        indicator_frames = load_indicator_inventory_frames(indicators_workbook_source, "JUL 26")
-        recovery_frames = load_recovery_template_frames(recovery_workbook_source)
-        frames = [indicator_frames, recovery_frames]
-        if materials_workbook_source is not None:
-            frames.append(load_material_inventory_frames(materials_workbook_source, "federal"))
-            frames.append(load_material_inventory_frames(materials_workbook_source, "avimex"))
-        return merge_inventory_frames(*frames), pd.DataFrame(), pd.DataFrame()
+        if lit_workbook_source is None:
+            raise RuntimeError("No hay base oficial sembrada y tampoco existe el Excel oficial de LIT 01/07/2026.")
+        return load_lit_official_inventory_frames(lit_workbook_source), pd.DataFrame(), pd.DataFrame()
 
     if inventory_scope == "frontera":
         return {"entradas": pd.DataFrame(), "salidas": pd.DataFrame(), "catalogo": pd.DataFrame()}, pd.DataFrame(), pd.DataFrame()
@@ -1329,7 +1314,7 @@ def load_inventory_bundle(
 def explain_load_error(exc: Exception, inventory_scope: str) -> None:
     st.error(f"No pude cargar el inventario `{INVENTORY_SCOPES[inventory_scope]}`: {exc}")
     if inventory_scope == "lit":
-        st.info("Verifica que existan el archivo de indicadores y el inventario de recuperacion.")
+        st.info("Verifica que exista el Excel oficial de LIT 01/07/2026 o que la base oficial ya este sembrada en Supabase.")
     else:
         st.info("Frontera aun no tiene base inicial; empieza capturando entradas cuando sea necesario.")
 
@@ -1367,12 +1352,10 @@ def main() -> None:
     else:
         st.sidebar.warning("No hay base oficial sembrada; se usaran Excel como respaldo.")
 
-    recovery_workbook_path = str(RECOVERY_WORKBOOK_PATH)
-    indicators_workbook_path = str(INDICATORS_WORKBOOK_PATH)
     materials_workbook_path = str(MATERIALS_WORKBOOK_PATH)
-    recovery_upload = None
-    indicators_upload = None
+    lit_workbook_path = str(LIT_OFFICIAL_WORKBOOK_PATH)
     materials_upload = None
+    lit_upload = None
     use_excel_fallback = False
     with st.sidebar.expander("Reconstruir desde Excel", expanded=not seed_available):
         use_excel_fallback = st.checkbox(
@@ -1380,33 +1363,26 @@ def main() -> None:
             value=not seed_available,
             help="Activalo solo para revisar o reconstruir la base oficial.",
         )
-        recovery_workbook_path = st.text_input(
-            "Excel de recuperacion",
-            value=recovery_workbook_path,
-        )
-        recovery_upload = st.file_uploader(
-            "Subir Excel de recuperacion",
-            type=["xlsx", "xlsm", "xls"],
-            key="recovery_upload",
-        )
-        indicators_workbook_path = st.text_input(
-            "Indicadores de almacenes",
-            value=indicators_workbook_path,
-        )
-        indicators_upload = st.file_uploader(
-            "Subir indicadores de almacenes",
-            type=["xlsx", "xlsm", "xls"],
-            key="indicators_upload",
-        )
-        materials_workbook_path = st.text_input(
-            "Excel Frontera/Federal",
-            value=materials_workbook_path,
-        )
-        materials_upload = st.file_uploader(
-            "Subir Excel Frontera/Federal",
-            type=["xlsx", "xlsm", "xls"],
-            key="materials_upload",
-        )
+        if inventory_scope == "lit":
+            lit_workbook_path = st.text_input(
+                "Excel oficial LIT",
+                value=lit_workbook_path,
+            )
+            lit_upload = st.file_uploader(
+                "Subir Excel oficial LIT",
+                type=["xlsx", "xlsm", "xls"],
+                key="lit_upload",
+            )
+        else:
+            materials_workbook_path = st.text_input(
+                "Excel Frontera/Federal",
+                value=materials_workbook_path,
+            )
+            materials_upload = st.file_uploader(
+                "Subir Excel Frontera/Federal",
+                type=["xlsx", "xlsm", "xls"],
+                key="materials_upload",
+            )
 
     st.sidebar.markdown("**Fuente configurada**")
     if inventory_scope == "lit":
@@ -1416,10 +1392,9 @@ def main() -> None:
     recovery_workbook_source = None
     indicators_workbook_source = None
     materials_workbook_source = None
+    lit_workbook_source = None
     if inventory_scope == "lit":
-        recovery_workbook_source = resolve_workbook_source(recovery_workbook_path, recovery_upload)
-        indicators_workbook_source = resolve_workbook_source(indicators_workbook_path, indicators_upload)
-        materials_workbook_source = resolve_workbook_source(materials_workbook_path, materials_upload)
+        lit_workbook_source = resolve_workbook_source(lit_workbook_path, lit_upload)
     else:
         materials_workbook_source = resolve_workbook_source(materials_workbook_path, materials_upload)
 
@@ -1429,6 +1404,7 @@ def main() -> None:
             recovery_workbook_source,
             indicators_workbook_source,
             materials_workbook_source,
+            lit_workbook_source,
             repository,
             prefer_seed=not use_excel_fallback,
         )

@@ -1006,6 +1006,40 @@ def load_indicator_inventory_frames(workbook_path: Path, sheet_name: str = "JUL 
     return {"entradas": entry_df, "salidas": exit_df, "catalogo": catalog_df}
 
 
+def load_lit_official_inventory_frames(workbook_path: Path, sheet_name: str | int = 0) -> dict[str, pd.DataFrame]:
+    df = _read_excel(workbook_path, sheet_name=sheet_name)
+    records = []
+    for _, row in df.iterrows():
+        catalogo = _raw_text(row.get("Referencia", ""))
+        descripcion = _raw_text(row.get("Nombre del material", ""))
+        if not catalogo and not descripcion:
+            continue
+        cantidad = pd.to_numeric(pd.Series([row.get("Existencia", 0)]), errors="coerce").fillna(0).iloc[0]
+        records.append(
+            {
+                "id_registro": "LIT_01_07_2026",
+                "codigo_local": _raw_text(row.get("NÃºmero", row.get("Número", ""))),
+                "codigo": catalogo or descripcion,
+                "descripcion": descripcion,
+                "catalogo": catalogo,
+                "marca": _raw_text(row.get("Marca", "")),
+                "lote": "",
+                "cantidad": cantidad,
+                "unidad": _raw_text(row.get("PresentaciÃ³n", row.get("Presentación", ""))),
+                "caducidad": "",
+                "ubicacion": "",
+                "categoria": "MATERIAL",
+                "fecha": pd.Timestamp("2026-07-01"),
+                "responsable": "Inventario LIT 01/07/2026",
+            }
+        )
+
+    entry_df = harmonize_transaction_keys(_base_from_records(records))
+    exit_df = _empty_base_df()
+    catalog_df = _catalog_from_movements(entry_df, exit_df)
+    return {"entradas": entry_df, "salidas": exit_df, "catalogo": catalog_df}
+
+
 def merge_inventory_frames(*frames_list: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     entries = _concat_non_empty_frames([frames.get("entradas", pd.DataFrame()) for frames in frames_list])
     exits = _concat_non_empty_frames([frames.get("salidas", pd.DataFrame()) for frames in frames_list])

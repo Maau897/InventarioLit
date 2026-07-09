@@ -4,7 +4,7 @@ App en Streamlit para operar el inventario LIT y el listado Frontera.
 
 ## Fuentes actuales
 
-- `LIT`: usa la base oficial integrada sembrada en `inventory_seed_entries`; ahi se junta LIT, federal y avimex.
+- `LIT`: usa la base oficial sembrada en `inventory_seed_entries`; se reconstruye desde `Inventario_de_materiales_LIT_01_07_2026.xlsx`.
 - `Frontera`: queda vacio por ahora y se usara para capturas nuevas cuando se implemente ese flujo.
 - Los Excel quedan solo como respaldo para reconstruir la base oficial.
 
@@ -25,7 +25,7 @@ streamlit run app.py
 4. Sube la base oficial a Supabase con el script de semilla.
 5. Configura secrets en Streamlit Cloud.
 
-Para sembrar `LIT` integrado y dejar `Frontera` vacio:
+Para sembrar `LIT` desde el Excel oficial y dejar `Frontera` vacio:
 
 ```powershell
 $env:SUPABASE_URL="https://tu-proyecto.supabase.co"
@@ -33,7 +33,7 @@ $env:SUPABASE_KEY="tu-service-role-key"
 python scripts\build_official_inventory_seed.py --all
 ```
 
-En la app, al seleccionar `LIT`, se carga solo el scope `lit`, pero ese scope ya contiene LIT, federal y avimex. Al seleccionar `Frontera`, se muestra un inventario vacio listo para capturas futuras.
+En la app, al seleccionar `LIT`, se carga solo el scope `lit` construido desde el formulario oficial de LIT. Al seleccionar `Frontera`, se muestra el inventario capturado para ese scope.
 
 Para sembrar solo una:
 
