@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tomllib
 from pathlib import Path
 
 import pandas as pd
@@ -60,6 +62,26 @@ def build_empty_frontera_seed() -> pd.DataFrame:
     return pd.DataFrame(columns=SEED_EXPORT_COLUMNS + ["source_label"])
 
 
+def _load_local_supabase_env() -> None:
+    for secrets_path in [ROOT_DIR / ".streamlit" / "secrets.toml", ROOT_DIR / "secrets.toml"]:
+        if not secrets_path.exists():
+            continue
+        secrets = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
+        if secrets.get("supabase_url") and not os.getenv("SUPABASE_URL"):
+            os.environ["SUPABASE_URL"] = str(secrets["supabase_url"])
+        if secrets.get("supabase_service_role_key") and not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+            os.environ["SUPABASE_SERVICE_ROLE_KEY"] = str(secrets["supabase_service_role_key"])
+        if secrets.get("supabase_key") and not os.getenv("SUPABASE_KEY"):
+            os.environ["SUPABASE_KEY"] = str(secrets["supabase_key"])
+
+
+def _supabase_env_ready() -> bool:
+    return bool(
+        os.getenv("SUPABASE_URL")
+        and (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY"))
+    )
+
+
 def _print_summary(scope: str, seed_df: pd.DataFrame) -> None:
     active = seed_df.loc[pd.to_numeric(seed_df["cantidad"], errors="coerce").fillna(0) > 0].copy()
     print(f"{scope}: {len(active)} claves activas")
@@ -78,6 +100,14 @@ def main() -> None:
 
     build_lit = args.all or args.lit or (not args.lit and not args.frontera)
     build_frontera = args.all or args.frontera
+    if not args.local_only:
+        _load_local_supabase_env()
+        if not _supabase_env_ready():
+            raise RuntimeError(
+                "Faltan credenciales de Supabase. Configura SUPABASE_URL y SUPABASE_KEY "
+                "o usa --local-only si solo quieres probar en CSV local."
+            )
+
     repository = LocalCsvRepository() if args.local_only else get_repository()
 
     if build_lit:
