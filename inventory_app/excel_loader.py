@@ -254,7 +254,9 @@ def _canonical_inventory_identity(
 
 
 def _raw_text(value: object) -> str:
-    return "" if value is None else str(value).strip()
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
 
 
 def ensure_item_key(df: pd.DataFrame) -> pd.DataFrame:
