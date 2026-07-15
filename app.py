@@ -216,6 +216,11 @@ def technical_code(catalogo: object, descripcion: object = "") -> str:
     return str(descripcion or "").strip() or "SIN CATALOGO"
 
 
+def required_db_text(value: object, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text or fallback
+
+
 def filter_by_item_key(df: pd.DataFrame, item_key: str) -> pd.DataFrame:
     if df.empty:
         return df.copy()
@@ -605,14 +610,8 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
         submitted = st.form_submit_button("Guardar entrada faltante", use_container_width=True)
         if submitted:
             errors = []
-            if not descripcion.strip():
-                errors.append("La descripcion es obligatoria.")
             if cantidad <= 0:
                 errors.append("La cantidad debe ser mayor a cero.")
-            if not responsable.strip():
-                errors.append("El responsable es obligatorio.")
-            if not temperatura.strip():
-                errors.append("La temperatura es obligatoria para entradas.")
             if errors:
                 for error in errors:
                     st.error(error)
@@ -623,7 +622,7 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
                         "movement_type": "entrada",
                         "id_registro": id_registro.strip(),
                         "codigo": technical_code(catalogo, descripcion),
-                        "descripcion": descripcion.strip(),
+                        "descripcion": required_db_text(descripcion, "SIN DESCRIPCION"),
                         "catalogo": catalogo.strip(),
                         "marca": marca.strip(),
                         "lote": lote.strip(),
@@ -633,7 +632,7 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
                         "ubicacion": ubicacion.strip(),
                         "categoria": categoria.strip(),
                         "fecha": parse_single_datetime(fecha).strftime("%Y-%m-%d"),
-                        "responsable": responsable.strip(),
+                        "responsable": required_db_text(responsable, "NO ESPECIFICADO"),
                         "temperatura": temperatura.strip(),
                         "observaciones": observaciones.strip(),
                         "verificado_por": "",
@@ -786,14 +785,8 @@ def render_movement_form(
         submitted = st.form_submit_button("Guardar movimiento", use_container_width=True)
         if submitted:
             errors = []
-            if not descripcion.strip():
-                errors.append("La descripcion es obligatoria.")
             if cantidad <= 0:
                 errors.append("La cantidad debe ser mayor a cero.")
-            if not responsable.strip():
-                errors.append("El responsable es obligatorio.")
-            if movement_type == "entrada" and not temperatura.strip():
-                errors.append("La temperatura es obligatoria para el formato de entrada.")
 
             if errors:
                 for error in errors:
@@ -806,7 +799,7 @@ def render_movement_form(
                             "movement_type": movement_type,
                             "id_registro": id_registro.strip(),
                             "codigo": technical_code(catalogo, descripcion),
-                            "descripcion": descripcion.strip(),
+                            "descripcion": required_db_text(descripcion, "SIN DESCRIPCION"),
                             "catalogo": catalogo.strip(),
                             "marca": marca.strip(),
                             "lote": lote.strip(),
@@ -816,7 +809,7 @@ def render_movement_form(
                             "ubicacion": ubicacion.strip(),
                             "categoria": categoria.strip(),
                             "fecha": parse_single_datetime(fecha).strftime("%Y-%m-%d"),
-                            "responsable": responsable.strip(),
+                            "responsable": required_db_text(responsable, "NO ESPECIFICADO"),
                             "temperatura": temperatura.strip(),
                             "observaciones": observaciones.strip(),
                             "verificado_por": verificado_por.strip(),
