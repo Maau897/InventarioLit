@@ -233,9 +233,10 @@ def normalize_text_key(value: object) -> str:
 
 
 def add_diagnostic_keys(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return ensure_item_key(df)
     prepared = ensure_item_key(df)
+    for column in ["catalogo", "codigo", "descripcion", "marca", ITEM_KEY_COLUMN]:
+        if column not in prepared.columns:
+            prepared[column] = ""
     prepared["catalog_norm"] = prepared["catalogo"].map(normalize_match_key)
     prepared["code_norm"] = prepared["codigo"].map(normalize_match_key)
     prepared["item_norm"] = prepared[ITEM_KEY_COLUMN].map(normalize_match_key)
