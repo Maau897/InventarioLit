@@ -1301,9 +1301,9 @@ def render_negative_correction_tab(
     related_variants = build_related_variant_rows(selected_code, general_inventory_df, source_entry_df, source_exit_df)
     app_rows = filter_app_scope_rows(app_movements, inventory_scope, selected_code)
 
-    source_entries = source_entries.sort_values("fecha", ascending=False, na_position="last")
-    source_exits = source_exits.sort_values("fecha", ascending=False, na_position="last")
-    app_rows = app_rows.sort_values("fecha", ascending=False, na_position="last") if not app_rows.empty else app_rows
+    source_entries = sort_by_existing_columns(source_entries, ["fecha"], ascending=False)
+    source_exits = sort_by_existing_columns(source_exits, ["fecha"], ascending=False)
+    app_rows = sort_by_existing_columns(app_rows, ["fecha"], ascending=False)
 
     tab_related, tab_entries, tab_exits, tab_app, tab_actions = st.tabs(
         ["Variantes relacionadas", "Entradas fuente", "Salidas fuente", "Movimientos capturados en app", "Acciones"]
@@ -1666,7 +1666,7 @@ def main() -> None:
         render_capture_admin(app_movements, repository, inventory_scope)
 
     with recepcion_tab:
-        recepcion_df = entry_df.sort_values("fecha", ascending=False, na_position="last").copy()
+        recepcion_df = sort_by_existing_columns(entry_df, ["fecha"], ascending=False).copy()
         visible_columns = [column for column in TABLE_COLUMNS + ["temperatura"] if column in recepcion_df.columns]
         render_full_table(
             "Recepcion",
@@ -1680,7 +1680,7 @@ def main() -> None:
         )
 
     with salidas_tab:
-        salidas_df = exit_df.sort_values("fecha", ascending=False, na_position="last").copy()
+        salidas_df = sort_by_existing_columns(exit_df, ["fecha"], ascending=False).copy()
         visible_columns = [column for column in TABLE_COLUMNS if column in salidas_df.columns]
         render_full_table(
             "Salidas",
