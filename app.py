@@ -591,7 +591,6 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
     with st.form(f"missing_entry_{inventory_scope}_{row['codigo']}"):
         form_col1, form_col2, form_col3 = st.columns(3)
         with form_col1:
-            id_registro = st.text_input("ID de entrada", value="")
             catalogo = st.text_input("Catalogo", value=str(row.get("catalogo", "")))
             descripcion = st.text_input("Descripcion", value=str(row.get("descripcion", "")))
             marca = st.text_input("Marca", value=str(row.get("marca", "")))
@@ -620,7 +619,7 @@ def render_add_missing_entry_form(row: pd.Series, repository, inventory_scope: s
                     {
                         "inventory_scope": inventory_scope,
                         "movement_type": "entrada",
-                        "id_registro": id_registro.strip(),
+                        "id_registro": "",
                         "codigo": technical_code(catalogo, descripcion),
                         "descripcion": required_db_text(descripcion, "SIN DESCRIPCION"),
                         "catalogo": catalogo.strip(),
@@ -744,10 +743,6 @@ def render_movement_form(
     with st.form(f"form_{inventory_scope}_{movement_type}_{reset_nonce}_{default_signature}", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         with col1:
-            id_registro = st.text_input(
-                "ID de entrada" if movement_type == "entrada" else "ID de salida",
-                value=str(defaults["id_registro"]),
-            )
             catalogo = st.text_input("Catalogo", value=str(defaults["catalogo"]))
             descripcion = st.text_input("Descripcion", value=str(defaults["descripcion"]))
             marca = st.text_input("Marca", value=str(defaults["marca"]))
@@ -797,7 +792,7 @@ def render_movement_form(
                         {
                             "inventory_scope": inventory_scope,
                             "movement_type": movement_type,
-                            "id_registro": id_registro.strip(),
+                            "id_registro": "",
                             "codigo": technical_code(catalogo, descripcion),
                             "descripcion": required_db_text(descripcion, "SIN DESCRIPCION"),
                             "catalogo": catalogo.strip(),
