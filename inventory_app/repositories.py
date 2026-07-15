@@ -48,6 +48,10 @@ MOVEMENT_COLUMNS = [
     "temperatura",
     "observaciones",
     "verificado_por",
+    "is_voided",
+    "voided_at",
+    "voided_by",
+    "void_reason",
     "captured_at",
 ]
 
@@ -96,6 +100,7 @@ def _ensure_movement_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["inventory_scope"] = (
         df["inventory_scope"].fillna("recuperacion").astype(str).str.strip().replace("", "recuperacion")
     )
+    df["is_voided"] = df["is_voided"].map(lambda value: str(value).strip().lower() in {"true", "1", "yes", "si"})
     return df[MOVEMENT_COLUMNS]
 
 

@@ -19,6 +19,10 @@ create table if not exists public.inventory_movements (
     temperatura text,
     observaciones text,
     verificado_por text,
+    is_voided boolean not null default false,
+    voided_at timestamptz,
+    voided_by text,
+    void_reason text,
     captured_at timestamptz not null default timezone('utc', now())
 );
 
@@ -27,6 +31,18 @@ alter table public.inventory_movements
 
 alter table public.inventory_movements
     add column if not exists inventory_scope text;
+
+alter table public.inventory_movements
+    add column if not exists is_voided boolean not null default false;
+
+alter table public.inventory_movements
+    add column if not exists voided_at timestamptz;
+
+alter table public.inventory_movements
+    add column if not exists voided_by text;
+
+alter table public.inventory_movements
+    add column if not exists void_reason text;
 
 update public.inventory_movements
 set inventory_scope = 'recuperacion'
@@ -78,6 +94,9 @@ create index if not exists inventory_movements_type_idx
 
 create index if not exists inventory_movements_scope_codigo_idx
     on public.inventory_movements (inventory_scope, codigo);
+
+create index if not exists inventory_movements_active_scope_idx
+    on public.inventory_movements (inventory_scope, is_voided);
 
 
 create table if not exists public.inventory_seed_entries (

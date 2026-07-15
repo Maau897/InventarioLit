@@ -129,6 +129,24 @@ EDITABLE_MOVEMENT_COLUMNS = [
     "verificado_por",
 ]
 
+MOVEMENT_ADMIN_COLUMNS = [
+    "movement_uid",
+    "movement_type",
+    "id_registro",
+    "catalogo",
+    "descripcion",
+    "marca",
+    "lote",
+    "cantidad",
+    "unidad",
+    "ubicacion",
+    "categoria",
+    "fecha",
+    "responsable",
+    "observaciones",
+    "captured_at",
+]
+
 NEGATIVE_REVIEW_COLUMNS = [
     "id_registro",
     "catalogo",
@@ -515,10 +533,18 @@ def filter_app_scope_rows(app_movements: pd.DataFrame, inventory_scope: str, sel
     if app_movements.empty:
         return pd.DataFrame(columns=app_movements.columns)
     filtered = app_movements.loc[app_movements["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
+    if "is_voided" in filtered.columns:
+        filtered = filtered.loc[~filtered["is_voided"].fillna(False).astype(bool)].copy()
     filtered = ensure_item_key(filtered)
     if selected_code is not None:
         filtered = filtered.loc[filtered[ITEM_KEY_COLUMN] == selected_code].copy()
     return filtered
+
+
+def filter_all_app_scope_rows(app_movements: pd.DataFrame, inventory_scope: str) -> pd.DataFrame:
+    if app_movements.empty:
+        return pd.DataFrame(columns=MOVEMENT_COLUMNS)
+    return app_movements.loc[app_movements["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
 
 
 def load_conflict_flags() -> pd.DataFrame:
@@ -1089,6 +1115,94 @@ def render_editable_captured_rows(
             st.rerun()
 
 
+def render_capture_admin(app_movements: pd.DataFrame, repository, inventory_scope: str) -> None:
+    st.subheader("Administrar capturas")
+    st.caption("Anula capturas equivocadas sin borrarlas de la auditoria. Las capturas anuladas ya no suman ni restan inventario.")
+
+    source = filter_all_app_scope_rows(app_movements, inventory_scope)
+    if source.empty:
+        st.info("No hay capturas registradas para este inventario.")
+        return
+
+    source = source.copy()
+    source["is_voided"] = source["is_voided"].fillna(False).astype(bool)
+    show_voided = st.checkbox("Mostrar capturas anuladas", value=False, key=f"show_voided_movements_{inventory_scope}")
+    visible = source.copy() if show_voided else source.loc[~source["is_voided"]].copy()
+
+    search = st.text_input(
+        "Buscar captura por catalogo, descripcion, marca, lote, responsable u observaciones",
+        key=f"admin_capture_search_{inventory_scope}",
+    )
+    if search.strip():
+        pattern = search.strip().lower()
+        visible = visible.loc[
+            visible.astype(str)
+            .apply(lambda col: col.str.lower().str.contains(pattern, na=False))
+            .any(axis=1)
+        ]
+
+    visible = visible.sort_values("captured_at", ascending=False, na_position="last")
+    display_columns = [column for column in MOVEMENT_ADMIN_COLUMNS + ["is_voided", "voided_by", "void_reason"] if column in visible.columns]
+    st.dataframe(
+        hide_display_columns(visible[order_columns(visible, display_columns)]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    active = visible.loc[~visible["is_voided"]].copy()
+    if active.empty:
+        st.info("No hay capturas activas en esta vista para anular.")
+        return
+
+    options = []
+    labels_by_uid = {}
+    for _, row in active.iterrows():
+        label = (
+            f"{row.get('movement_type', '')} | {row.get('catalogo', '') or row.get('codigo', '')} | "
+            f"{row.get('descripcion', '')} | {row.get('cantidad', '')} {row.get('unidad', '')} | "
+            f"{row.get('fecha', '')}"
+        )
+        uid = str(row.get("movement_uid", ""))
+        labels_by_uid[label] = uid
+        options.append(label)
+
+    with st.form(f"void_movement_form_{inventory_scope}"):
+        selected_label = st.selectbox("Captura a anular", options=options)
+        voided_by = st.text_input("Quien autoriza/anula", value="")
+        void_reason = st.text_area("Motivo de anulacion", height=100)
+        confirm = st.checkbox("Confirmo que esta captura no debe contar en el inventario")
+        submitted = st.form_submit_button("Anular captura seleccionada", use_container_width=True)
+
+        if submitted:
+            if not voided_by.strip():
+                st.error("Indica quien autoriza o realiza la anulacion.")
+                return
+            if not void_reason.strip():
+                st.error("El motivo de anulacion es obligatorio.")
+                return
+            if not confirm:
+                st.error("Marca la confirmacion antes de anular.")
+                return
+
+            uid = labels_by_uid[selected_label]
+            updated = source.loc[source["movement_uid"].astype(str) == uid].copy()
+            if updated.empty:
+                st.error("No encontre la captura seleccionada.")
+                return
+            updated["is_voided"] = True
+            updated["voided_at"] = pd.Timestamp.now().isoformat()
+            updated["voided_by"] = voided_by.strip()
+            updated["void_reason"] = void_reason.strip()
+            try:
+                repository.upsert_movements(updated[MOVEMENT_COLUMNS])
+            except Exception as exc:
+                st.error(str(exc))
+                st.info("La anulacion no se confirma hasta que Supabase la acepte.")
+            else:
+                st.success("Captura anulada correctamente.")
+                st.rerun()
+
+
 def render_catalog_search(
     general_inventory_df: pd.DataFrame,
     app_movements: pd.DataFrame,
@@ -1429,7 +1543,7 @@ def main() -> None:
             ignore_index=True,
         )
 
-    scope_movements = app_movements.loc[app_movements["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
+    scope_movements = filter_app_scope_rows(app_movements, inventory_scope)
     inventory_df, entry_df, exit_df, catalog_df = build_inventory_snapshot(
         frames["entradas"],
         frames["salidas"],
@@ -1462,13 +1576,14 @@ def main() -> None:
     kpi3.metric("Entradas acumuladas", f"{total_entries:,.0f}")
     kpi4.metric("Salidas acumuladas", f"{total_exits:,.0f}")
 
-    resumen_tab, negativos_tab, corregir_negativos_tab, buscador_tab, editar_catalogo_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, regularizaciones_tab = st.tabs(
+    resumen_tab, negativos_tab, corregir_negativos_tab, buscador_tab, editar_catalogo_tab, administrar_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, regularizaciones_tab = st.tabs(
         [
             "Resumen general",
             "Negativos por revisar",
             "Corregir negativos",
             "Buscador catalogo",
             "Editar catalogo",
+            "Administrar capturas",
             "Recepcion",
             "Salidas",
             "Registrar entrada",
@@ -1544,6 +1659,9 @@ def main() -> None:
 
     with editar_catalogo_tab:
         render_catalog_editor(repository, inventory_scope, app_movements)
+
+    with administrar_tab:
+        render_capture_admin(app_movements, repository, inventory_scope)
 
     with recepcion_tab:
         recepcion_df = entry_df.sort_values("fecha", ascending=False, na_position="last").copy()
