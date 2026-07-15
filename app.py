@@ -396,7 +396,8 @@ def build_related_variant_rows(
         "salida",
         "existencia",
     ]
-    return combined[order_columns(combined, preferred)].sort_values(
+    return sort_by_existing_columns(
+        combined[order_columns(combined, preferred)],
         ["source_type", "catalogo", "codigo", "lote", "fecha"],
         na_position="last",
     )
@@ -492,6 +493,18 @@ def order_columns(df: pd.DataFrame, preferred: list[str]) -> list[str]:
     existing_preferred = [column for column in preferred if column in df.columns]
     remaining = [column for column in df.columns if column not in existing_preferred]
     return existing_preferred + remaining
+
+
+def sort_by_existing_columns(
+    df: pd.DataFrame,
+    columns: list[str],
+    ascending=True,
+    na_position: str = "last",
+) -> pd.DataFrame:
+    sort_columns = [column for column in columns if column in df.columns]
+    if not sort_columns:
+        return df
+    return df.sort_values(sort_columns, ascending=ascending, na_position=na_position)
 
 
 def rename_display_columns(df: pd.DataFrame, rename_map: dict[str, str]) -> pd.DataFrame:
