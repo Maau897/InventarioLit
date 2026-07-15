@@ -106,6 +106,11 @@ def _sanitize_records_df(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def _remote_write_error(action: str, exc: Exception) -> RuntimeError:
+    detail = str(exc).strip() or exc.__class__.__name__
+    return RuntimeError(f"No se pudo {action} en Supabase. Detalle: {detail}")
+
+
 def _ensure_regularization_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for column in REGULARIZATION_COLUMNS:
@@ -240,10 +245,12 @@ class SupabaseRepository:
         payload["movement_uid"] = str(payload.get("movement_uid") or uuid4())
         payload["inventory_scope"] = str(payload.get("inventory_scope") or "recuperacion")
         payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
+        clean_payload = _sanitize_records_df(_ensure_movement_columns(pd.DataFrame([payload]))).to_dict(orient="records")[0]
         try:
-            self.client.table("inventory_movements").insert(payload).execute()
-        except Exception:
-            pass
+            self.client.table("inventory_movements").insert(clean_payload).execute()
+        except Exception as exc:
+            self.local_backup.save_movement(payload)
+            raise _remote_write_error("guardar el movimiento", exc) from exc
         self.local_backup.save_movement(payload)
 
     def upsert_movements(self, movements_df: pd.DataFrame) -> None:
@@ -256,8 +263,9 @@ class SupabaseRepository:
                     records,
                     on_conflict="movement_uid",
                 ).execute()
-            except Exception:
-                pass
+            except Exception as exc:
+                self.local_backup.upsert_movements(payload_df)
+                raise _remote_write_error("actualizar movimientos", exc) from exc
         self.local_backup.upsert_movements(payload_df)
 
     def load_seed_entries(self, inventory_scope: str) -> pd.DataFrame:
@@ -342,8 +350,9 @@ class SupabaseRepository:
         clean_payload = _sanitize_records_df(pd.DataFrame([payload]))[REGULARIZATION_COLUMNS].to_dict(orient="records")[0]
         try:
             self.client.table("inventory_regularizations").insert(clean_payload).execute()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.local_backup.save_regularization(payload)
+            raise _remote_write_error("guardar la regularizacion", exc) from exc
         self.local_backup.save_regularization(payload)
 
 

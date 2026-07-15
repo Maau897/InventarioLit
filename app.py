@@ -773,31 +773,36 @@ def render_movement_form(
                 for error in errors:
                     st.error(error)
             else:
-                repository.save_movement(
-                    {
-                        "inventory_scope": inventory_scope,
-                        "movement_type": movement_type,
-                        "id_registro": id_registro.strip(),
-                        "codigo": technical_code(catalogo, descripcion),
-                        "descripcion": descripcion.strip(),
-                        "catalogo": catalogo.strip(),
-                        "marca": marca.strip(),
-                        "lote": lote.strip(),
-                        "cantidad": cantidad,
-                        "unidad": unidad.strip(),
-                        "caducidad": caducidad.strip(),
-                        "ubicacion": ubicacion.strip(),
-                        "categoria": categoria.strip(),
-                        "fecha": parse_single_datetime(fecha).strftime("%Y-%m-%d"),
-                        "responsable": responsable.strip(),
-                        "temperatura": temperatura.strip(),
-                        "observaciones": observaciones.strip(),
-                        "verificado_por": verificado_por.strip(),
-                    }
-                )
-                st.success("Movimiento guardado correctamente.")
-                st.session_state[reset_state_key] = reset_nonce + 1
-                st.rerun()
+                try:
+                    repository.save_movement(
+                        {
+                            "inventory_scope": inventory_scope,
+                            "movement_type": movement_type,
+                            "id_registro": id_registro.strip(),
+                            "codigo": technical_code(catalogo, descripcion),
+                            "descripcion": descripcion.strip(),
+                            "catalogo": catalogo.strip(),
+                            "marca": marca.strip(),
+                            "lote": lote.strip(),
+                            "cantidad": cantidad,
+                            "unidad": unidad.strip(),
+                            "caducidad": caducidad.strip(),
+                            "ubicacion": ubicacion.strip(),
+                            "categoria": categoria.strip(),
+                            "fecha": parse_single_datetime(fecha).strftime("%Y-%m-%d"),
+                            "responsable": responsable.strip(),
+                            "temperatura": temperatura.strip(),
+                            "observaciones": observaciones.strip(),
+                            "verificado_por": verificado_por.strip(),
+                        }
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                    st.info("El movimiento no se confirma como guardado hasta que Supabase lo acepte.")
+                else:
+                    st.success("Movimiento guardado correctamente.")
+                    st.session_state[reset_state_key] = reset_nonce + 1
+                    st.rerun()
 
 
 def build_regularization_as_movements(regularizations_df: pd.DataFrame) -> pd.DataFrame:
