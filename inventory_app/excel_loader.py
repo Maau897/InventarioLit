@@ -630,6 +630,7 @@ def build_inventory_snapshot(
     entry_dates = entry_df.groupby(ITEM_KEY_COLUMN, as_index=False)["fecha"].max().rename(
         columns={"fecha": "fecha_recepcion"}
     )
+    entry_dates["fecha_recepcion"] = entry_dates["fecha_recepcion"].dt.strftime("%Y-%m-%d")
     inventory_df = catalog_df.merge(entry_totals, on=ITEM_KEY_COLUMN, how="left").merge(
         exit_totals, on=ITEM_KEY_COLUMN, how="left"
     ).merge(
