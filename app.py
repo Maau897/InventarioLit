@@ -60,6 +60,7 @@ SUMMARY_COLUMNS = [
     "ubicacion",
     "lote",
     "caducidad",
+    "fecha_recepcion",
     "entrada",
     "salida",
     "existencia",

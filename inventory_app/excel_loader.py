@@ -627,8 +627,13 @@ def build_inventory_snapshot(
     exit_totals = exit_df.groupby(ITEM_KEY_COLUMN, as_index=False)["cantidad"].sum().rename(
         columns={"cantidad": "salida"}
     )
+    entry_dates = entry_df.groupby(ITEM_KEY_COLUMN, as_index=False)["fecha"].max().rename(
+        columns={"fecha": "fecha_recepcion"}
+    )
     inventory_df = catalog_df.merge(entry_totals, on=ITEM_KEY_COLUMN, how="left").merge(
         exit_totals, on=ITEM_KEY_COLUMN, how="left"
+    ).merge(
+        entry_dates, on=ITEM_KEY_COLUMN, how="left"
     )
     inventory_df["entrada"] = inventory_df["entrada"].fillna(0)
     inventory_df["salida"] = inventory_df["salida"].fillna(0)
@@ -647,6 +652,7 @@ def build_inventory_snapshot(
             "lote",
             "unidad",
             "caducidad",
+            "fecha_recepcion",
             "ubicacion",
             "categoria",
             "entrada",
