@@ -566,6 +566,18 @@ def filter_all_app_scope_rows(app_movements: pd.DataFrame, inventory_scope: str)
     return app_movements.loc[app_movements["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
 
 
+def complete_movement_columns(updated: pd.DataFrame, original: pd.DataFrame) -> pd.DataFrame:
+    completed = updated.copy()
+    original_by_uid = original.set_index("movement_uid") if "movement_uid" in original.columns else pd.DataFrame()
+    for column in MOVEMENT_COLUMNS:
+        if column not in completed.columns:
+            if not original_by_uid.empty and column in original_by_uid.columns:
+                completed[column] = completed["movement_uid"].map(original_by_uid[column].to_dict())
+            else:
+                completed[column] = None
+    return completed[MOVEMENT_COLUMNS]
+
+
 def load_conflict_flags() -> pd.DataFrame:
     LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not CONFLICTS_PATH.exists():
@@ -858,6 +870,10 @@ def build_regularization_as_movements(regularizations_df: pd.DataFrame) -> pd.Da
             "temperatura": "",
             "observaciones": "Regularizacion inicial: " + df["tipo_regularizacion"].fillna("").astype(str),
             "verificado_por": df["validado_por"],
+            "is_voided": False,
+            "voided_at": None,
+            "voided_by": None,
+            "void_reason": None,
             "captured_at": df["captured_at"],
         }
     )
@@ -1120,19 +1136,20 @@ def render_editable_captured_rows(
             updated["captured_at"] = updated["movement_uid"].map(
                 subset.set_index("movement_uid")["captured_at"].to_dict()
             )
-            updated["codigo"] = updated["movement_uid"].map(
-                subset.set_index("movement_uid")["codigo"].to_dict()
-            )
-            missing_code = updated["codigo"].fillna("").astype(str).str.strip() == ""
-            updated.loc[missing_code, "codigo"] = updated.loc[missing_code].apply(
+            updated["codigo"] = updated.apply(
                 lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
                 axis=1,
             )
             updated["fecha"] = parse_mixed_datetime_series(updated["fecha"]).dt.strftime("%Y-%m-%d")
             updated["cantidad"] = pd.to_numeric(updated["cantidad"], errors="coerce").fillna(0)
-            repository.upsert_movements(updated[MOVEMENT_COLUMNS])
-            st.success(f"Se actualizaron las {movement_type}s capturadas.")
-            st.rerun()
+            try:
+                repository.upsert_movements(complete_movement_columns(updated, subset))
+            except Exception as exc:
+                st.error(str(exc))
+                st.info("Los cambios no se confirman hasta que Supabase los acepte.")
+            else:
+                st.success(f"Se actualizaron las {movement_type}s capturadas.")
+                st.rerun()
 
 
 def render_capture_admin(app_movements: pd.DataFrame, repository, inventory_scope: str) -> None:
