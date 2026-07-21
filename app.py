@@ -1085,10 +1085,15 @@ def render_editable_captured_rows(
             continue
 
         editor_source = subset[EDITABLE_MOVEMENT_COLUMNS].copy().set_index("movement_uid")
+        if "fecha" in editor_source.columns:
+            editor_source["fecha"] = parse_mixed_datetime_series(editor_source["fecha"]).dt.date
         edited = st.data_editor(
             editor_source,
             hide_index=True,
             use_container_width=True,
+            column_config={
+                "fecha": st.column_config.DateColumn("Fecha", format="YYYY-MM-DD"),
+            },
             key=f"editor_{inventory_scope}_{movement_type}_{selected_code}",
         )
         if st.button(

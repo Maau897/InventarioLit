@@ -88,6 +88,15 @@ def _get_config_value(secret_key: str, env_key: str, default: str = "") -> str:
         return str(os.getenv(env_key, default))
 
 
+def _format_date_value(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date().isoformat()
+
+
 def _ensure_movement_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for column in MOVEMENT_COLUMNS:
@@ -100,6 +109,7 @@ def _ensure_movement_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["inventory_scope"] = (
         df["inventory_scope"].fillna("recuperacion").astype(str).str.strip().replace("", "recuperacion")
     )
+    df["fecha"] = df["fecha"].map(_format_date_value)
     df["is_voided"] = df["is_voided"].map(lambda value: str(value).strip().lower() in {"true", "1", "yes", "si"})
     return df[MOVEMENT_COLUMNS]
 
