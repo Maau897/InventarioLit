@@ -972,6 +972,10 @@ def render_regularization_table(regularizations_df: pd.DataFrame, inventory_scop
 
 def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.DataFrame) -> None:
     st.subheader("Editar catalogo")
+    reset_state_key = f"catalog_editor_reset_{inventory_scope}"
+    if reset_state_key not in st.session_state:
+        st.session_state[reset_state_key] = 0
+    reset_nonce = st.session_state[reset_state_key]
     st.caption(
         "Usa esta pestaña para corregir nombres ambiguos de materiales/reactivos. "
         "Si hay base oficial, actualiza la semilla; si no hay semilla, actualiza los movimientos capturados."
@@ -981,7 +985,7 @@ def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.Da
         "Base a editar",
         options=[inventory_scope],
         format_func=lambda value: INVENTORY_SCOPES.get(value, value),
-        key=f"catalog_editor_scope_{inventory_scope}",
+        key=f"catalog_editor_scope_{inventory_scope}_{reset_nonce}",
     )
 
     seed_df = repository.load_seed_entries(target_scope)
@@ -1015,7 +1019,7 @@ def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.Da
     ]
     search = st.text_input(
         "Buscar por catalogo, descripcion, marca o ubicacion",
-        key=f"catalog_editor_search_{inventory_scope}_{target_scope}",
+        key=f"catalog_editor_search_{inventory_scope}_{target_scope}_{reset_nonce}",
     )
     filtered = source_df.copy()
     if search.strip():
@@ -1032,10 +1036,10 @@ def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.Da
         use_container_width=True,
         hide_index=True,
         disabled=[column for column in display_columns if column not in editable_columns],
-        key=f"catalog_editor_{inventory_scope}_{target_scope}",
+        key=f"catalog_editor_{inventory_scope}_{target_scope}_{reset_nonce}",
     )
 
-    if st.button("Guardar cambios de catalogo", key=f"save_catalog_editor_{inventory_scope}_{target_scope}", use_container_width=True):
+    if st.button("Guardar cambios de catalogo", key=f"save_catalog_editor_{inventory_scope}_{target_scope}_{reset_nonce}", use_container_width=True):
         updated_source = source_df.copy()
         edited = edited.copy()
         for column in editable_columns:
@@ -1050,19 +1054,28 @@ def render_catalog_editor(repository, inventory_scope: str, app_movements: pd.Da
                 lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
                 axis=1,
             )
-            repository.upsert_movements(updated_movements[MOVEMENT_COLUMNS])
+            try:
+                repository.upsert_movements(updated_movements[MOVEMENT_COLUMNS])
+            except Exception as exc:
+                st.error(str(exc))
+                return
         else:
             updated_seed = updated_source.drop(columns=["row_id"])
             updated_seed["codigo"] = updated_seed.apply(
                 lambda row: technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
                 axis=1,
             )
-            repository.replace_seed_entries(
-                target_scope,
-                updated_seed,
-                source_label=f"catalogo_editado_{target_scope}",
-            )
+            try:
+                repository.replace_seed_entries(
+                    target_scope,
+                    updated_seed,
+                    source_label=f"catalogo_editado_{target_scope}",
+                )
+            except Exception as exc:
+                st.error(f"No se pudo guardar el catalogo en Supabase. Detalle: {exc}")
+                return
         st.success("Catalogo actualizado.")
+        st.session_state[reset_state_key] = reset_nonce + 1
         st.rerun()
 
 
@@ -1583,19 +1596,19 @@ def main() -> None:
     kpi3.metric("Entradas acumuladas", f"{total_entries:,.0f}")
     kpi4.metric("Salidas acumuladas", f"{total_exits:,.0f}")
 
-    resumen_tab, negativos_tab, corregir_negativos_tab, buscador_tab, editar_catalogo_tab, administrar_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, regularizaciones_tab = st.tabs(
+    resumen_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, buscador_tab, editar_catalogo_tab, administrar_tab, regularizaciones_tab, negativos_tab, corregir_negativos_tab = st.tabs(
         [
             "Resumen general",
-            "Negativos por revisar",
-            "Corregir negativos",
-            "Buscador catalogo",
-            "Editar catalogo",
-            "Administrar capturas",
-            "Recepcion",
+            "Entradas",
             "Salidas",
             "Registrar entrada",
             "Registrar salida",
+            "Buscador catalogo",
+            "Editar catalogo",
+            "Administrar capturas",
             "Regularizaciones",
+            "Negativos por revisar",
+            "Corregir negativos",
         ]
     )
 
@@ -1674,7 +1687,7 @@ def main() -> None:
         recepcion_df = sort_by_existing_columns(entry_df, ["fecha"], ascending=False).copy()
         visible_columns = [column for column in TABLE_COLUMNS + ["temperatura"] if column in recepcion_df.columns]
         render_full_table(
-            "Recepcion",
+            "Entradas",
             rename_display_columns(
                 recepcion_df[order_columns(recepcion_df, visible_columns)],
                 {
