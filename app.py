@@ -1,5 +1,7 @@
 from pathlib import Path
 from io import BytesIO
+import os
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
@@ -30,10 +32,26 @@ from inventory_app.excel_loader import (
     parse_single_datetime,
 )
 from inventory_app.repositories import MOVEMENT_COLUMNS, PHYSICAL_COUNT_COLUMNS, REGULARIZATION_COLUMNS, get_repository
+from inventory_app.supabase_users import (
+    actualizar_rol_usuario,
+    aprobar_usuario,
+    autenticar_usuario,
+    configure_supabase_users,
+    crear_admin_inicial,
+    eliminar_usuario,
+    listar_eventos_auditoria,
+    listar_usuarios,
+    obtener_usuarios_pendientes,
+    registrar_evento_auditoria,
+    registrar_usuario,
+    supabase_users_enabled,
+)
 from inventory_app.config import LOCAL_DATA_DIR
 
 
 st.set_page_config(page_title="Inventario General INER", layout="wide")
+
+ROLES_USUARIO = ["captura", "responsable", "auditor", "calidad", "admin"]
 
 ENTRY_COLUMNS = [
     "id_registro",
@@ -223,9 +241,209 @@ HIDDEN_DISPLAY_COLUMNS = [
 ]
 
 
+def get_config_value(secret_key: str, env_key: str, default: Any = "") -> Any:
+    try:
+        return st.secrets.get(secret_key, os.getenv(env_key, default))
+    except Exception:
+        return os.getenv(env_key, default)
+
+
+def as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "si", "on"}
+    return bool(value)
+
+
+def configure_users_backend() -> None:
+    configure_supabase_users(
+        url=str(get_config_value("supabase_url", "SUPABASE_URL", "")),
+        key=str(get_config_value("supabase_key", "SUPABASE_KEY", "")),
+        enabled=as_bool(get_config_value("use_supabase_users", "USE_SUPABASE_USERS", False)),
+        table_name=str(get_config_value("supabase_users_table", "SUPABASE_USERS_TABLE", "usuarios_app")),
+        audit_table_name=str(get_config_value("supabase_audit_table", "SUPABASE_AUDIT_TABLE", "inventario_auditoria")),
+    )
+
+    admin_email = str(get_config_value("admin_email", "ADMIN_EMAIL", "")).strip()
+    admin_password = str(get_config_value("admin_password", "ADMIN_PASSWORD", "")).strip()
+    if supabase_users_enabled() and admin_email and admin_password:
+        try:
+            crear_admin_inicial(admin_email, admin_password)
+        except Exception:
+            pass
+
+
+def normalize_user_role(rol: Any, es_admin: bool = False) -> str:
+    if es_admin:
+        return "admin"
+    normalized = str(rol or "captura").strip().lower()
+    return normalized if normalized in ROLES_USUARIO else "captura"
+
+
 def init_state() -> None:
     if "selected_code" not in st.session_state:
         st.session_state.selected_code = ""
+    defaults = {
+        "autenticado": False,
+        "usuario_email": "",
+        "es_admin": False,
+        "rol_usuario": "captura",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def log_activity(accion: str, detalle: str = "") -> None:
+    if not supabase_users_enabled():
+        return
+    try:
+        registrar_evento_auditoria(
+            email=str(st.session_state.get("usuario_email", "")).strip(),
+            accion=accion,
+            detalle=detalle,
+        )
+    except Exception:
+        pass
+
+
+def render_auth_screen() -> None:
+    st.title("Acceso al inventario")
+    st.caption("Ingresa con tu usuario autorizado para usar el sistema.")
+
+    if not supabase_users_enabled():
+        st.error("La autenticacion no esta configurada en esta app.")
+        st.info("Activa `use_supabase_users` y configura `supabase_url`, `supabase_key` y `supabase_users_table` en secrets.")
+        st.stop()
+
+    login_tab, register_tab = st.tabs(["Iniciar sesion", "Crear cuenta"])
+
+    with login_tab:
+        email_login = st.text_input("Correo", key="login_email")
+        password_login = st.text_input("Contrasena", type="password", key="login_password")
+        if st.button("Ingresar", use_container_width=True):
+            try:
+                result = autenticar_usuario(email_login, password_login, normalize_user_role)
+                if result["ok"]:
+                    st.session_state["autenticado"] = True
+                    st.session_state["usuario_email"] = result["email"]
+                    st.session_state["es_admin"] = result["es_admin"]
+                    st.session_state["rol_usuario"] = result.get("rol", "captura")
+                    log_activity("inicio_sesion", "Ingreso a Inventario")
+                    st.rerun()
+                else:
+                    st.error(result["mensaje"])
+            except Exception as exc:
+                st.error(f"No se pudo iniciar sesion: {exc}")
+
+    with register_tab:
+        email_register = st.text_input("Correo institucional o personal", key="register_email")
+        password_register = st.text_input("Contrasena", type="password", key="register_password")
+        password_register_2 = st.text_input("Confirmar contrasena", type="password", key="register_password_2")
+        requested_role = st.selectbox(
+            "Perfil solicitado",
+            ["captura", "responsable", "auditor", "calidad"],
+            format_func=lambda value: value.capitalize(),
+            key="register_role",
+        )
+        if st.button("Crear cuenta", use_container_width=True):
+            try:
+                if not email_register.strip() or not password_register:
+                    st.warning("Completa correo y contrasena.")
+                elif password_register != password_register_2:
+                    st.warning("Las contrasenas no coinciden.")
+                else:
+                    registrar_usuario(email_register, password_register, requested_role)
+                    st.success("Cuenta creada. Queda pendiente de aprobacion.")
+            except Exception as exc:
+                st.error(f"No se pudo crear la cuenta: {exc}")
+
+
+def render_user_sidebar() -> None:
+    st.sidebar.write(f"Sesion: `{st.session_state.get('usuario_email', '')}`")
+    st.sidebar.write(f"Perfil: `{st.session_state.get('rol_usuario', 'captura')}`")
+    if st.sidebar.button("Cerrar sesion", use_container_width=True):
+        log_activity("cerrar_sesion", "Salida de Inventario")
+        st.session_state["autenticado"] = False
+        st.session_state["usuario_email"] = ""
+        st.session_state["es_admin"] = False
+        st.session_state["rol_usuario"] = "captura"
+        st.rerun()
+
+
+def render_user_admin_sidebar() -> None:
+    if not st.session_state.get("es_admin", False) or not supabase_users_enabled():
+        return
+
+    st.sidebar.divider()
+    st.sidebar.subheader("Administracion de usuarios")
+    try:
+        pending_users = obtener_usuarios_pendientes()
+        st.sidebar.markdown("**Solicitudes pendientes**")
+        if pending_users:
+            for user_id, email, registered_at in pending_users:
+                st.sidebar.write(f"{email} - {registered_at}")
+                approval_role = st.sidebar.selectbox(
+                    f"Rol para {email}",
+                    ROLES_USUARIO,
+                    index=ROLES_USUARIO.index("captura"),
+                    format_func=lambda value: value.capitalize(),
+                    key=f"approval_role_{user_id}",
+                )
+                if st.sidebar.button("Aprobar", key=f"approve_{user_id}", use_container_width=True):
+                    aprobar_usuario(user_id, approval_role)
+                    log_activity("aprobar_usuario", f"{email} -> {approval_role}")
+                    st.sidebar.success(f"Usuario {email} aprobado.")
+                    st.rerun()
+        else:
+            st.sidebar.caption("No hay usuarios pendientes.")
+
+        st.sidebar.markdown("**Usuarios activos**")
+        approved_users = [row for row in listar_usuarios() if row[2] == 1]
+        admin_count = sum(1 for row in approved_users if row[3] == 1)
+        if approved_users:
+            for user_id, email, _, _, role, _ in approved_users:
+                new_role = st.sidebar.selectbox(
+                    email,
+                    ROLES_USUARIO,
+                    index=ROLES_USUARIO.index(role if role in ROLES_USUARIO else "captura"),
+                    format_func=lambda value: value.capitalize(),
+                    key=f"role_user_{user_id}",
+                )
+                if st.sidebar.button("Actualizar rol", key=f"update_role_{user_id}", use_container_width=True):
+                    actualizar_rol_usuario(user_id, new_role)
+                    log_activity("actualizar_rol", f"{email} -> {new_role}")
+                    st.sidebar.success(f"Rol de {email} actualizado.")
+                    st.rerun()
+                can_delete_user = email != str(st.session_state.get("usuario_email", "")).strip().lower()
+                would_remove_last_admin = role == "admin" and admin_count <= 1
+                if st.sidebar.button("Quitar acceso", key=f"delete_user_{user_id}", use_container_width=True):
+                    if not can_delete_user:
+                        st.sidebar.warning("No puedes quitar tu propio acceso desde aqui.")
+                    elif would_remove_last_admin:
+                        st.sidebar.warning("No puedes quitar al ultimo admin activo.")
+                    else:
+                        eliminar_usuario(user_id)
+                        log_activity("quitar_acceso", email)
+                        st.sidebar.success(f"Se quito el acceso de {email}.")
+                        st.rerun()
+        else:
+            st.sidebar.caption("No hay usuarios aprobados.")
+
+        with st.sidebar.expander("Historial de actividad", expanded=False):
+            try:
+                events = listar_eventos_auditoria(limit=40)
+                if events:
+                    for event in events:
+                        st.write(f"{event.get('created_at', '')} - {event.get('email', '')}")
+                        st.caption(f"{event.get('accion', '')}: {event.get('detalle', '')}")
+                else:
+                    st.caption("Sin actividad registrada todavia.")
+            except Exception:
+                st.caption("El historial aun no esta disponible.")
+    except Exception as exc:
+        st.sidebar.error(f"No se pudo cargar la administracion de usuarios: {exc}")
 
 
 def get_item_key(row: pd.Series) -> str:
@@ -1733,9 +1951,16 @@ def resolve_workbook_source(local_path: str, uploaded_file=None):
 
 
 def main() -> None:
+    configure_users_backend()
     init_state()
+    if not st.session_state["autenticado"]:
+        render_auth_screen()
+        return
+
     st.title("Inventario General INER")
     st.caption("Inventarios operativos: LIT y Frontera.")
+    render_user_sidebar()
+    render_user_admin_sidebar()
 
     repository = get_repository()
 

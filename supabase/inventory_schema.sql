@@ -26,6 +26,43 @@ create table if not exists public.inventory_movements (
     captured_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.usuarios_app (
+    id_usuario bigint generated always as identity primary key,
+    email text unique not null,
+    password_hash text not null,
+    aprobado boolean not null default false,
+    es_admin boolean not null default false,
+    rol text not null default 'captura',
+    fecha_registro timestamptz not null default now()
+);
+
+alter table public.usuarios_app
+    add column if not exists rol text not null default 'captura';
+
+create index if not exists idx_usuarios_app_email
+    on public.usuarios_app (email);
+
+create index if not exists idx_usuarios_app_aprobado
+    on public.usuarios_app (aprobado);
+
+create table if not exists public.inventario_auditoria (
+    id_evento bigint generated always as identity primary key,
+    email text not null,
+    accion text not null,
+    detalle text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_inventario_auditoria_created_at
+    on public.inventario_auditoria (created_at desc);
+
+create index if not exists idx_inventario_auditoria_email
+    on public.inventario_auditoria (email);
+
+alter table public.usuarios_app enable row level security;
+
+alter table public.inventario_auditoria enable row level security;
+
 alter table public.inventory_movements
     add column if not exists movement_uid text;
 
