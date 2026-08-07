@@ -130,3 +130,146 @@ create index if not exists inventory_seed_entries_scope_idx
 
 create index if not exists inventory_seed_entries_scope_codigo_idx
     on public.inventory_seed_entries (inventory_scope, codigo);
+
+
+create table if not exists public.inventory_physical_counts (
+    id bigint generated always as identity primary key,
+    count_uid text,
+    inventory_scope text,
+    codigo text not null,
+    descripcion text not null,
+    catalogo text,
+    marca text,
+    lote text,
+    unidad text,
+    ubicacion text,
+    categoria text,
+    existencia_anterior numeric not null default 0,
+    conteo_fisico numeric not null default 0,
+    verificacion_fisica numeric not null default 0,
+    conteos_empatan boolean not null default false,
+    diferencia numeric,
+    ajuste_aplicado boolean not null default false,
+    movement_uid text,
+    fecha_conteo date not null,
+    contador text not null,
+    verificador text not null,
+    observaciones text,
+    captured_at timestamptz not null default timezone('utc', now())
+);
+
+alter table public.inventory_physical_counts
+    add column if not exists count_uid text;
+
+alter table public.inventory_physical_counts
+    add column if not exists inventory_scope text;
+
+alter table public.inventory_physical_counts
+    add column if not exists codigo text;
+
+alter table public.inventory_physical_counts
+    add column if not exists descripcion text;
+
+alter table public.inventory_physical_counts
+    add column if not exists catalogo text;
+
+alter table public.inventory_physical_counts
+    add column if not exists marca text;
+
+alter table public.inventory_physical_counts
+    add column if not exists lote text;
+
+alter table public.inventory_physical_counts
+    add column if not exists unidad text;
+
+alter table public.inventory_physical_counts
+    add column if not exists ubicacion text;
+
+alter table public.inventory_physical_counts
+    add column if not exists categoria text;
+
+alter table public.inventory_physical_counts
+    add column if not exists existencia_anterior numeric not null default 0;
+
+alter table public.inventory_physical_counts
+    add column if not exists conteo_fisico numeric not null default 0;
+
+alter table public.inventory_physical_counts
+    add column if not exists verificacion_fisica numeric not null default 0;
+
+alter table public.inventory_physical_counts
+    add column if not exists conteos_empatan boolean not null default false;
+
+alter table public.inventory_physical_counts
+    add column if not exists diferencia numeric;
+
+alter table public.inventory_physical_counts
+    add column if not exists ajuste_aplicado boolean not null default false;
+
+alter table public.inventory_physical_counts
+    add column if not exists movement_uid text;
+
+alter table public.inventory_physical_counts
+    add column if not exists fecha_conteo date;
+
+alter table public.inventory_physical_counts
+    add column if not exists contador text;
+
+alter table public.inventory_physical_counts
+    add column if not exists verificador text;
+
+alter table public.inventory_physical_counts
+    add column if not exists observaciones text;
+
+alter table public.inventory_physical_counts
+    add column if not exists captured_at timestamptz not null default timezone('utc', now());
+
+update public.inventory_physical_counts
+set inventory_scope = 'lit'
+where inventory_scope is null or btrim(inventory_scope) = '';
+
+update public.inventory_physical_counts
+set count_uid = md5(random()::text || clock_timestamp()::text || coalesce(codigo, '') || coalesce(fecha_conteo::text, ''))
+where count_uid is null or btrim(count_uid) = '';
+
+alter table public.inventory_physical_counts
+    alter column count_uid set not null;
+
+alter table public.inventory_physical_counts
+    alter column inventory_scope set default 'lit';
+
+alter table public.inventory_physical_counts
+    alter column inventory_scope set not null;
+
+alter table public.inventory_physical_counts
+    drop constraint if exists inventory_physical_counts_inventory_scope_check;
+
+alter table public.inventory_physical_counts
+    add constraint inventory_physical_counts_inventory_scope_check
+    check (inventory_scope in ('general', 'recuperacion', 'avimex', 'federal', 'lit', 'frontera'));
+
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'inventory_physical_counts_count_uid_key'
+    ) then
+        alter table public.inventory_physical_counts
+            add constraint inventory_physical_counts_count_uid_key unique (count_uid);
+    end if;
+end $$;
+
+create index if not exists inventory_physical_counts_scope_idx
+    on public.inventory_physical_counts (inventory_scope);
+
+create index if not exists inventory_physical_counts_catalogo_idx
+    on public.inventory_physical_counts (catalogo);
+
+create index if not exists inventory_physical_counts_fecha_idx
+    on public.inventory_physical_counts (fecha_conteo);
+
+create index if not exists inventory_physical_counts_scope_catalogo_idx
+    on public.inventory_physical_counts (inventory_scope, catalogo);
+
+alter table public.inventory_physical_counts enable row level security;

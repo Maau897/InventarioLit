@@ -1,5 +1,6 @@
 from pathlib import Path
 from io import BytesIO
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -28,7 +29,7 @@ from inventory_app.excel_loader import (
     parse_mixed_datetime_series,
     parse_single_datetime,
 )
-from inventory_app.repositories import MOVEMENT_COLUMNS, REGULARIZATION_COLUMNS, get_repository
+from inventory_app.repositories import MOVEMENT_COLUMNS, PHYSICAL_COUNT_COLUMNS, REGULARIZATION_COLUMNS, get_repository
 from inventory_app.config import LOCAL_DATA_DIR
 
 
@@ -195,6 +196,27 @@ REGULARIZATION_DISPLAY_COLUMNS = [
     "inventory_scope",
 ]
 
+PHYSICAL_COUNT_DISPLAY_COLUMNS = [
+    "fecha_conteo",
+    "catalogo",
+    "descripcion",
+    "marca",
+    "lote",
+    "unidad",
+    "ubicacion",
+    "categoria",
+    "existencia_anterior",
+    "conteo_fisico",
+    "verificacion_fisica",
+    "conteos_empatan",
+    "diferencia",
+    "ajuste_aplicado",
+    "contador",
+    "verificador",
+    "observaciones",
+    "captured_at",
+]
+
 HIDDEN_DISPLAY_COLUMNS = [
     "codigo",
     "codigo_local",
@@ -220,6 +242,13 @@ def technical_code(catalogo: object, descripcion: object = "") -> str:
 def required_db_text(value: object, fallback: str) -> str:
     text = str(value or "").strip()
     return text or fallback
+
+
+def safe_float(value: object, fallback: float = 0.0) -> float:
+    parsed = pd.to_numeric(value, errors="coerce")
+    if pd.isna(parsed):
+        return fallback
+    return float(parsed)
 
 
 def filter_by_item_key(df: pd.DataFrame, item_key: str) -> pd.DataFrame:
@@ -846,6 +875,224 @@ def render_movement_form(
                     st.rerun()
 
 
+def physical_counts_excel_bytes(counts_df: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    export_df = counts_df.copy()
+    if not export_df.empty:
+        export_df["conteos_empatan"] = export_df["conteos_empatan"].map(lambda value: "SI" if bool(value) else "NO")
+        export_df["ajuste_aplicado"] = export_df["ajuste_aplicado"].map(lambda value: "SI" if bool(value) else "NO")
+        export_df = export_df[order_columns(export_df, PHYSICAL_COUNT_DISPLAY_COLUMNS)]
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export_df.to_excel(writer, sheet_name="Conteos fisicos", index=False)
+    return output.getvalue()
+
+
+def render_physical_counts_tab(
+    general_inventory_df: pd.DataFrame,
+    repository,
+    inventory_scope: str,
+) -> None:
+    st.subheader("Conteos fisicos")
+    st.caption(
+        "Registra un conteo y una verificacion. Solo si ambos numeros empatan, la app ajusta la existencia actual del catalogo."
+    )
+
+    option_source = general_inventory_df.copy()
+    if option_source.empty:
+        st.info("No hay catalogo disponible para conteo en este inventario.")
+        return
+
+    search = st.text_input(
+        "Buscar catalogo para conteo",
+        key=f"physical_count_search_{inventory_scope}",
+        help="Busca por catalogo, descripcion, marca, lote o ubicacion.",
+    )
+    if search.strip():
+        pattern = search.strip().lower()
+        filtered_options = option_source.loc[
+            option_source.astype(str)
+            .apply(lambda col: col.str.lower().str.contains(pattern, na=False))
+            .any(axis=1)
+        ].copy()
+    else:
+        filtered_options = option_source.loc[option_source["existencia"].fillna(0) > 0].copy()
+        if filtered_options.empty:
+            filtered_options = option_source.copy()
+
+    if filtered_options.empty:
+        st.warning("No encontre catalogos con ese criterio.")
+        return
+
+    count_options = build_catalog_options(filtered_options)
+    selected_label = st.selectbox(
+        "Selecciona el insumo contado",
+        options=count_options,
+        index=1 if len(count_options) > 1 else 0,
+        key=f"physical_count_selector_{inventory_scope}_{normalize_match_key(search)}",
+    )
+    if selected_label == "Nuevo insumo":
+        st.info("Para conteo fisico selecciona un insumo ya existente del inventario.")
+        return
+
+    selected_code = selected_label.split(" - ", 1)[0]
+    selected_rows = filter_by_item_key(general_inventory_df, selected_code)
+    if selected_rows.empty:
+        st.error("No encontre el insumo seleccionado en el inventario actual.")
+        return
+
+    row = selected_rows.iloc[0]
+    existencia_anterior = safe_float(row.get("existencia", 0))
+    st.metric("Existencia actual antes del conteo", f"{existencia_anterior:,.0f}")
+
+    with st.expander("Ficha del insumo", expanded=True):
+        card_cols = st.columns(3)
+        with card_cols[0]:
+            st.markdown(f"**Catalogo:** {row.get('catalogo', '')}")
+            st.markdown(f"**Descripcion:** {row.get('descripcion', '')}")
+            st.markdown(f"**Marca:** {row.get('marca', '')}")
+        with card_cols[1]:
+            st.markdown(f"**Lote:** {row.get('lote', '')}")
+            st.markdown(f"**Unidad:** {row.get('unidad', '')}")
+            st.markdown(f"**Categoria:** {row.get('categoria', '')}")
+        with card_cols[2]:
+            st.markdown(f"**Ubicacion:** {row.get('ubicacion', '')}")
+            st.markdown(f"**Caducidad:** {row.get('caducidad', '')}")
+
+    with st.form(f"physical_count_form_{inventory_scope}_{selected_code}"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            fecha_conteo = st.date_input("Fecha de conteo", value=pd.Timestamp.today().date())
+            contador = st.text_input("Nombre de quien cuenta")
+        with col2:
+            conteo_fisico = st.number_input("Primer conteo", min_value=0.0, step=1.0, value=existencia_anterior)
+            verificador = st.text_input("Nombre de quien verifica")
+        with col3:
+            verificacion_fisica = st.number_input("Conteo de verificacion", min_value=0.0, step=1.0, value=existencia_anterior)
+            observaciones = st.text_area("Observaciones", height=120)
+
+        submitted = st.form_submit_button("Guardar conteo fisico", use_container_width=True)
+        if submitted:
+            errors = []
+            if not contador.strip():
+                errors.append("Indica el nombre de quien cuenta.")
+            if not verificador.strip():
+                errors.append("Indica el nombre de quien verifica.")
+            if contador.strip() and verificador.strip() and normalize_text_key(contador) == normalize_text_key(verificador):
+                errors.append("La verificacion debe registrarla una persona distinta a quien cuenta.")
+            if errors:
+                for error in errors:
+                    st.error(error)
+                return
+
+            conteos_empatan = float(conteo_fisico) == float(verificacion_fisica)
+            diferencia = float(conteo_fisico) - existencia_anterior if conteos_empatan else None
+            count_uid = str(uuid4())
+            movement_uid = str(uuid4()) if conteos_empatan and diferencia and diferencia != 0 else ""
+            fecha_text = parse_single_datetime(fecha_conteo).strftime("%Y-%m-%d")
+            base_payload = {
+                "count_uid": count_uid,
+                "inventory_scope": inventory_scope,
+                "codigo": technical_code(row.get("catalogo", ""), row.get("descripcion", "")),
+                "descripcion": required_db_text(row.get("descripcion", ""), "SIN DESCRIPCION"),
+                "catalogo": str(row.get("catalogo", "") or "").strip(),
+                "marca": str(row.get("marca", "") or "").strip(),
+                "lote": str(row.get("lote", "") or "").strip(),
+                "unidad": str(row.get("unidad", "") or "").strip(),
+                "ubicacion": str(row.get("ubicacion", "") or "").strip(),
+                "categoria": str(row.get("categoria", "") or "").strip(),
+                "existencia_anterior": existencia_anterior,
+                "conteo_fisico": float(conteo_fisico),
+                "verificacion_fisica": float(verificacion_fisica),
+                "conteos_empatan": conteos_empatan,
+                "diferencia": diferencia,
+                "ajuste_aplicado": False,
+                "movement_uid": "",
+                "fecha_conteo": fecha_text,
+                "contador": contador.strip(),
+                "verificador": verificador.strip(),
+                "observaciones": observaciones.strip(),
+            }
+
+            try:
+                repository.save_physical_count(base_payload)
+            except Exception as exc:
+                st.error(str(exc))
+                st.info("El conteo no se confirma como guardado hasta que Supabase lo acepte.")
+                return
+
+            if movement_uid:
+                try:
+                    repository.save_movement(
+                        {
+                            "movement_uid": movement_uid,
+                            "inventory_scope": inventory_scope,
+                            "movement_type": "entrada" if diferencia > 0 else "salida",
+                            "id_registro": f"CONTEO-{count_uid[:8]}",
+                            "codigo": base_payload["codigo"],
+                            "descripcion": base_payload["descripcion"],
+                            "catalogo": base_payload["catalogo"],
+                            "marca": base_payload["marca"],
+                            "lote": base_payload["lote"],
+                            "cantidad": abs(float(diferencia)),
+                            "unidad": base_payload["unidad"],
+                            "caducidad": str(row.get("caducidad", "") or "").strip(),
+                            "ubicacion": base_payload["ubicacion"],
+                            "categoria": base_payload["categoria"],
+                            "fecha": fecha_text,
+                            "responsable": required_db_text(contador, "NO ESPECIFICADO"),
+                            "temperatura": "",
+                            "observaciones": (
+                                "Ajuste automatico por conteo fisico. "
+                                f"Conteo: {conteo_fisico}; verificacion: {verificacion_fisica}. "
+                                f"{observaciones.strip()}"
+                            ).strip(),
+                            "verificado_por": verificador.strip(),
+                        }
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                    st.info("El conteo quedo guardado, pero la existencia no se ajusto. Puedes revisar el historial antes de repetir.")
+                    return
+
+                base_payload["movement_uid"] = movement_uid
+                base_payload["ajuste_aplicado"] = True
+                try:
+                    repository.upsert_physical_counts(pd.DataFrame([base_payload]))
+                except Exception as exc:
+                    st.warning(f"La existencia se ajusto, pero no pude marcar el conteo como aplicado. Detalle: {exc}")
+                    return
+
+            if not conteos_empatan:
+                st.warning("Conteo guardado como no coincidente. No se actualizo la existencia.")
+            elif movement_uid:
+                st.success("Conteo guardado y existencia ajustada correctamente.")
+            else:
+                st.success("Conteo guardado. No hizo falta ajustar existencia.")
+            st.rerun()
+
+    counts_df = repository.load_physical_counts()
+    scope_counts = counts_df.loc[counts_df["inventory_scope"].isin(get_scope_filter_values(inventory_scope))].copy()
+    st.markdown("#### Historial de conteos")
+    if scope_counts.empty:
+        st.info("Aun no hay conteos fisicos guardados para este inventario.")
+        return
+
+    scope_counts = sort_by_existing_columns(scope_counts, ["fecha_conteo", "captured_at"], ascending=False)
+    display_df = scope_counts[order_columns(scope_counts, PHYSICAL_COUNT_DISPLAY_COLUMNS)].copy()
+    st.download_button(
+        "Descargar Excel de conteos fisicos",
+        data=physical_counts_excel_bytes(scope_counts),
+        file_name=f"conteos_fisicos_{inventory_scope}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    st.dataframe(
+        hide_display_columns(display_df),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def build_regularization_as_movements(regularizations_df: pd.DataFrame) -> pd.DataFrame:
     if regularizations_df.empty:
         return pd.DataFrame(columns=MOVEMENT_COLUMNS)
@@ -1154,7 +1401,7 @@ def render_editable_captured_rows(
 
 
 def render_capture_admin(app_movements: pd.DataFrame, repository, inventory_scope: str) -> None:
-    st.subheader("Administrar capturas")
+    st.subheader("Anular capturas")
     st.caption("Anula capturas equivocadas sin borrarlas de la auditoria. Las capturas anuladas ya no suman ni restan inventario.")
 
     source = filter_all_app_scope_rows(app_movements, inventory_scope)
@@ -1247,7 +1494,7 @@ def render_catalog_search(
     repository,
     inventory_scope: str,
 ) -> None:
-    st.subheader("Buscador por catalogo")
+    st.subheader("Buscador y edicion")
     st.caption(
         "Busca por catalogo, descripcion o marca. Desde aqui puedes localizar el activo y editar movimientos capturados para corregir negativos."
     )
@@ -1614,16 +1861,16 @@ def main() -> None:
     kpi3.metric("Entradas acumuladas", f"{total_entries:,.0f}")
     kpi4.metric("Salidas acumuladas", f"{total_exits:,.0f}")
 
-    resumen_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, buscador_tab, editar_catalogo_tab, administrar_tab, regularizaciones_tab, negativos_tab, corregir_negativos_tab = st.tabs(
+    resumen_tab, recepcion_tab, salidas_tab, entrada_form_tab, salida_form_tab, conteos_fisicos_tab, buscador_tab, administrar_tab, regularizaciones_tab, negativos_tab, corregir_negativos_tab = st.tabs(
         [
             "Resumen general",
             "Entradas",
             "Salidas",
             "Registrar entrada",
             "Registrar salida",
-            "Buscador catalogo",
-            "Editar catalogo",
-            "Administrar capturas",
+            "Conteos fisicos",
+            "Buscador y edicion",
+            "Anular capturas",
             "Regularizaciones",
             "Negativos por revisar",
             "Corregir negativos",
@@ -1695,9 +1942,6 @@ def main() -> None:
     with buscador_tab:
         render_catalog_search(general_inventory_df, app_movements, repository, inventory_scope)
 
-    with editar_catalogo_tab:
-        render_catalog_editor(repository, inventory_scope, app_movements)
-
     with administrar_tab:
         render_capture_admin(app_movements, repository, inventory_scope)
 
@@ -1734,6 +1978,9 @@ def main() -> None:
 
     with salida_form_tab:
         render_movement_form("salida", catalog_df, repository, inventory_scope)
+
+    with conteos_fisicos_tab:
+        render_physical_counts_tab(general_inventory_df, repository, inventory_scope)
 
     with regularizaciones_tab:
         regularization_view_tab, regularization_form_tab = st.tabs(["Ver regularizaciones", "Registrar regularizacion"])

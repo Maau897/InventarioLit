@@ -7,6 +7,7 @@ import pandas as pd
 from inventory_app.config import (
     LOCAL_DATA_DIR,
     LOCAL_MOVEMENTS_PATH,
+    LOCAL_PHYSICAL_COUNTS_PATH,
     LOCAL_REGULARIZATIONS_PATH,
     LOCAL_SEED_ENTRIES_PATH,
 )
@@ -78,6 +79,31 @@ REGULARIZATION_COLUMNS = [
     "captured_at",
 ]
 
+PHYSICAL_COUNT_COLUMNS = [
+    "count_uid",
+    "inventory_scope",
+    "codigo",
+    "descripcion",
+    "catalogo",
+    "marca",
+    "lote",
+    "unidad",
+    "ubicacion",
+    "categoria",
+    "existencia_anterior",
+    "conteo_fisico",
+    "verificacion_fisica",
+    "conteos_empatan",
+    "diferencia",
+    "ajuste_aplicado",
+    "movement_uid",
+    "fecha_conteo",
+    "contador",
+    "verificador",
+    "observaciones",
+    "captured_at",
+]
+
 
 def _get_config_value(secret_key: str, env_key: str, default: str = "") -> str:
     try:
@@ -141,11 +167,34 @@ def _ensure_regularization_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[REGULARIZATION_COLUMNS]
 
 
+def _ensure_physical_count_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for column in PHYSICAL_COUNT_COLUMNS:
+        if column not in df.columns:
+            df[column] = None
+    df["count_uid"] = df["count_uid"].fillna("").astype(str).str.strip()
+    missing_uid_mask = df["count_uid"] == ""
+    if missing_uid_mask.any():
+        df.loc[missing_uid_mask, "count_uid"] = [str(uuid4()) for _ in range(missing_uid_mask.sum())]
+    df["inventory_scope"] = (
+        df["inventory_scope"].fillna("lit").astype(str).str.strip().replace("", "lit")
+    )
+    df["fecha_conteo"] = df["fecha_conteo"].map(_format_date_value)
+    df["conteos_empatan"] = df["conteos_empatan"].map(
+        lambda value: str(value).strip().lower() in {"true", "1", "yes", "si"}
+    )
+    df["ajuste_aplicado"] = df["ajuste_aplicado"].map(
+        lambda value: str(value).strip().lower() in {"true", "1", "yes", "si"}
+    )
+    return df[PHYSICAL_COUNT_COLUMNS]
+
+
 @dataclass
 class LocalCsvRepository:
     path: str = str(LOCAL_MOVEMENTS_PATH)
     regularizations_path: str = str(LOCAL_REGULARIZATIONS_PATH)
     seed_entries_path: str = str(LOCAL_SEED_ENTRIES_PATH)
+    physical_counts_path: str = str(LOCAL_PHYSICAL_COUNTS_PATH)
 
     def load_movements(self) -> pd.DataFrame:
         LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -234,6 +283,32 @@ class LocalCsvRepository:
         payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
         updated = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
         _ensure_regularization_columns(updated).to_csv(self.regularizations_path, index=False)
+
+    def load_physical_counts(self) -> pd.DataFrame:
+        LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if not LOCAL_PHYSICAL_COUNTS_PATH.exists():
+            return pd.DataFrame(columns=PHYSICAL_COUNT_COLUMNS)
+        df = pd.read_csv(self.physical_counts_path)
+        return _ensure_physical_count_columns(df)
+
+    def save_physical_count(self, payload: dict[str, object]) -> None:
+        df = self.load_physical_counts()
+        payload = payload.copy()
+        payload["count_uid"] = str(payload.get("count_uid") or uuid4())
+        payload["inventory_scope"] = str(payload.get("inventory_scope") or "lit")
+        payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
+        updated = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
+        _ensure_physical_count_columns(updated).to_csv(self.physical_counts_path, index=False)
+
+    def upsert_physical_counts(self, counts_df: pd.DataFrame) -> None:
+        existing = self.load_physical_counts()
+        payload = _ensure_physical_count_columns(counts_df)
+        if existing.empty:
+            payload.to_csv(self.physical_counts_path, index=False)
+            return
+        existing = existing.loc[~existing["count_uid"].isin(payload["count_uid"])].copy()
+        updated = pd.concat([existing, payload], ignore_index=True)
+        _ensure_physical_count_columns(updated).to_csv(self.physical_counts_path, index=False)
 
 
 class SupabaseRepository:
@@ -369,6 +444,47 @@ class SupabaseRepository:
             self.local_backup.save_regularization(payload)
             raise _remote_write_error("guardar la regularizacion", exc) from exc
         self.local_backup.save_regularization(payload)
+
+    def load_physical_counts(self) -> pd.DataFrame:
+        try:
+            response = self.client.table("inventory_physical_counts").select("*").execute()
+            data = response.data or []
+            if not data:
+                return self.local_backup.load_physical_counts()
+            df = pd.DataFrame(data)
+            return _ensure_physical_count_columns(df)
+        except Exception:
+            return self.local_backup.load_physical_counts()
+
+    def save_physical_count(self, payload: dict[str, object]) -> None:
+        payload = payload.copy()
+        payload["count_uid"] = str(payload.get("count_uid") or uuid4())
+        payload["inventory_scope"] = str(payload.get("inventory_scope") or "lit")
+        payload["captured_at"] = payload.get("captured_at") or pd.Timestamp.now().isoformat()
+        clean_payload = _sanitize_records_df(
+            _ensure_physical_count_columns(pd.DataFrame([payload]))
+        ).to_dict(orient="records")[0]
+        try:
+            self.client.table("inventory_physical_counts").insert(clean_payload).execute()
+        except Exception as exc:
+            self.local_backup.save_physical_count(payload)
+            raise _remote_write_error("guardar el conteo fisico", exc) from exc
+        self.local_backup.save_physical_count(payload)
+
+    def upsert_physical_counts(self, counts_df: pd.DataFrame) -> None:
+        payload_df = _ensure_physical_count_columns(counts_df)
+        payload_df = _sanitize_records_df(payload_df)
+        records = payload_df.to_dict(orient="records")
+        if records:
+            try:
+                self.client.table("inventory_physical_counts").upsert(
+                    records,
+                    on_conflict="count_uid",
+                ).execute()
+            except Exception as exc:
+                self.local_backup.upsert_physical_counts(payload_df)
+                raise _remote_write_error("actualizar conteos fisicos", exc) from exc
+        self.local_backup.upsert_physical_counts(payload_df)
 
 
 def get_repository():
