@@ -200,11 +200,11 @@ def _canonical_inventory_identity(
         canonical_key = "FILTRO DE JERINGA 0.22 UM"
         canonical_desc = "FILTRO DE JERINGA 0.22 UM"
     elif (
-        source_norm in {"06666A1", "0666A1", "34155"}
+        source_norm in {"06666A1", "0666A1"}
         or (
             "KIMTECH" in desc_upper
             and "KIMBER" in brand_upper
-            and source_norm in {"06666A1", "0666A1", "34155"}
+            and source_norm in {"06666A1", "0666A1"}
         )
     ):
         canonical_key = "06-666A-1"
